@@ -206,20 +206,22 @@
          (get-file-local conn port)
          <?)
     (let [db-root          (storage/read-db-root conn network dbid index-point)
-          {:keys [spot psot post opst]} (<? db-root)
+          {:keys [spot psot post opst taspo]} (<? db-root)
           sync-spot-ch     (sync-index-branch conn port (:id spot))
           sync-psot-ch     (sync-index-branch conn port (:id psot))
           sync-post-ch     (sync-index-branch conn port (:id post))
           sync-opst-ch     (sync-index-branch conn port (:id opst))
+          sync-taspo-ch    (sync-index-branch conn port (:id taspo))
           garbage-file-key (storage/ledger-garbage-key network dbid index-point)
           storage-exists?  (:storage-exists conn)
           garbage-exists?  (<? (storage-exists? garbage-file-key))]
 
-      ;; kick off 4 indexes in parallel...  will throw if an error occurs
+      ;; kick off 5 indexes in parallel...  will throw if an error occurs
       (<? sync-spot-ch)
       (<? sync-psot-ch)
       (<? sync-post-ch)
       (<? sync-opst-ch)
+      (<? sync-taspo-ch)
       (when-not garbage-exists?
         (>! port garbage-file-key))
       ::done)))

@@ -813,7 +813,7 @@
   is independent from any 'official' db with the same block."
   [db]
   (let [tempid  (UUID/randomUUID)
-        indexes [:spot :psot :post :opst]]
+        indexes [:spot :psot :post :opst :taspo]]
     (reduce
       (fn [db idx]
         (let [index (assoc (get db idx) :tempid tempid)]

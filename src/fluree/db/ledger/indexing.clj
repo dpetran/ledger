@@ -324,14 +324,15 @@
 
 
 (defn index-root
-  "Indexes an index-type root (:spot, :psot, :post, or :opst).
+  "Indexes an index-type root (:spot, :psot, :post, :opst, or taspo).
 
   Progress atom tracks progress and retains list of garbage indexes."
   ([db progress-atom idx-type]
    (index-root db progress-atom idx-type #{}))
   ([db progress-atom idx-type remove-preds]
    (go-try
-     (assert (#{:spot :psot :post :opst} idx-type) (str "Reindex attempt on unknown index type: " idx-type))
+    (assert (#{:spot :psot :post :opst :taspo} idx-type)
+            (str "Reindex attempt on unknown index type: " idx-type))
      (let [{:keys [conn novelty block t network dbid]} db
            idx-novelty (get novelty idx-type)
            dirty?      (or (not (empty? idx-novelty)) remove-preds)
@@ -354,7 +355,7 @@
   ([db {:keys [status message ecount remove-preds]}]
    (go-try
      (let [{:keys [novelty block t network dbid]} db
-           db-dirty?    (or (some #(not-empty (get novelty %)) [:spot :psot :post :opst])
+           db-dirty?    (or (some #(not-empty (get novelty %)) [:spot :psot :post :opst :taspo])
                             remove-preds)
            novelty-size (:size novelty)
            progress     (atom {:garbage   []                ;; hold keys of old index segments we can garbage collect
@@ -372,15 +373,18 @@
                psot-ch    (index-root db progress :psot)
                post-ch    (index-root db progress :post remove-preds)
                opst-ch    (index-root db progress :opst)
+               taspo-ch   (index-root db progress :taspo)
                indexed-db (-> db
                               (assoc :spot (<? spot-ch)
                                      :psot (<? psot-ch)
                                      :post (<? post-ch)
-                                     :opst (<? opst-ch))
+                                     :opst (<? opst-ch)
+                                     :taspo (<? taspo-ch))
                               (update-in [:novelty :spot] empty) ;; retain sort order of indexes
                               (update-in [:novelty :psot] empty)
                               (update-in [:novelty :post] empty)
                               (update-in [:novelty :opst] empty)
+                              (update-in [:novelty :taspo] empty)
                               (assoc-in [:novelty :size] 0)
                               (assoc-in [:stats :indexed] block))]
            ;; wait until confirmed writes before returning
@@ -507,11 +511,13 @@
     (let [spot-comp (.comparator (-> db :novelty :spot))
           post-comp (.comparator (-> db :novelty :post))
           psot-comp (.comparator (-> db :novelty :psot))
-          opst-comp (.comparator (-> db :novelty :opst))]
+          opst-comp (.comparator (-> db :novelty :opst))
+          taspo-comp (.comparator (-> db :novelty :taspo))]
       (do (validate-idx-continuity (:spot db) true spot-comp)
           (validate-idx-continuity (:post db) true post-comp)
           (validate-idx-continuity (:psot db) true psot-comp)
-          (validate-idx-continuity (:opst db) true opst-comp))))
+          (validate-idx-continuity (:opst db) true opst-comp)
+          (validate-idx-continuity (:taspo db) true taspo-comp))))
 
   (check-ctnty db)
 

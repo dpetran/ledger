@@ -98,10 +98,11 @@
                          (into opst-flakes))
         size        (flake/size-bytes flakes)
         novelty     (:novelty blank-db)
-        novelty*    {:spot (into (:spot novelty) flakes)
-                     :psot (into (:psot novelty) flakes)
-                     :post (into (:post novelty) post-flakes)
-                     :opst (into (:opst novelty) opst-flakes)
+        novelty*    {:spot  (into (:spot novelty) flakes)
+                     :psot  (into (:psot novelty) flakes)
+                     :post  (into (:post novelty) post-flakes)
+                     :opst  (into (:opst novelty) opst-flakes)
+                     :taspo (into (:taspo novelty) flakes)
                      :size size}
         t           (apply min (map #(.-t %) flakes))]
     (assoc blank-db :block 1
@@ -192,5 +193,3 @@
                    (txproto/write-index-point-async group db**)
                    (recur (inc block) db**))
                  (recur (inc block) db*))))))))))
-
-

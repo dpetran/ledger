@@ -30,7 +30,7 @@
             (doseq [idx-point idx-points]
               (log/info (str " - Updating index " idx-point " for db: " db-ident))
               (let [db-root (<? (storage/read-db-root conn network dbid idx-point))
-                    indexes [:spot :psot :post :opst]]
+                    indexes [:spot :psot :post :opst :taspo]]
                 (doseq [idx-type indexes]
                   (let [root-idx-key (-> db-root (get idx-type) :id)
                         branch-data  (<? (storage/read-branch conn root-idx-key))

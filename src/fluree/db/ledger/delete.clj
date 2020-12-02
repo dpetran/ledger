@@ -35,7 +35,7 @@
     (let [session  (session/session conn (str network "/" dbid))
           blank-db (:blank-db session)
           db       (<? (storage/reify-db conn network dbid blank-db idx-point))
-          idxs     [:spot :psot :post :opst]]
+          idxs     [:spot :psot :post :opst :taspo]]
       (doseq [idx idxs]
         (<? (delete-all-index-children conn (get db idx)))))))
 
