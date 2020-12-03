@@ -1340,28 +1340,46 @@
           :type (keyword (:type tx-map)))))))
 
 
+(defn guard-current-db
+  [db session]
+  (when-not db
+    ;; TODO - think about this error, if it is possible, and what to do with any pending transactions
+    (log/warn "Unable to find a current db. Db transaction processor closing for db: %s/%s."
+              (:network session)
+              (:dbid session))
+    (session/close session)
+    (throw (ex-info (format "Unable to find a current db for: %s/%s."
+                            (:network session)
+                            (:dbid session))
+                    {:status 400, :error :db/invalid-transaction})))
+  db)
+
+(defn guard-previous-hash
+  [prev]
+  (when-not prev
+    (throw (ex-info (str "Unable to retrieve previous block hash. Unexpected error.")
+                    {:status 500
+                     :error  :db/unexpected-error})))
+  prev)
+
+
 (defn build-block
   "Builds a new block with supplied transaction(s)."
   [session transactions]
   (go-try
     (let [private-key   (:tx-private-key (:conn session))
-          db-before-ch  (session/current-db session)
-          db-before     (<? db-before-ch)
-          _             (when (nil? db-before)
-                          ;; TODO - think about this error, if it is possible, and what to do with any pending transactions
-                          (log/warn "Unable to find a current db. Db transaction processor closing for db: %s/%s." (:network session) (:dbid session))
-                          (session/close session)
-                          (throw (ex-info (format "Unable to find a current db for: %s/%s." (:network session) (:dbid session))
-                                          {:status 400 :error :db/invalid-transaction})))
-          block         (inc (:block db-before))
+          db-before     (-> session
+                            session/current-db
+                            <?
+                            (guard-current-db session))
+          prev-hash     (-> db-before
+                            (fql/query {:selectOne "?hash"
+                                        :where     [["?t" "_block/number" (:block db-before)]
+                                                    ["?t" "_block/hash" "?hash"]]})
+                            <?
+                            guard-previous-hash)
+          block         (-> db-before :block inc)
           block-instant (Instant/now)
-          prev-hash     (<? (fql/query db-before {:selectOne "?hash"
-                                                  :where     [["?t" "_block/number" (:block db-before)]
-                                                              ["?t" "_block/hash" "?hash"]]}))
-          _             (when-not prev-hash
-                          (throw (ex-info (str "Unable to retrieve previous block hash. Unexpected error.")
-                                          {:status 500
-                                           :error  :db/unexpected-error})))
           before-t      (:t db-before)]
       ;; perform each transaction in order
       (loop [[cmd-data & r] transactions
