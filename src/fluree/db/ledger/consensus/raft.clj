@@ -232,14 +232,11 @@
                                     server-allowed? (= submission-server
                                                        (get-in @state-atom [:_work :networks network]))]
                                 ;; if :new-db in cmd-types, then register new-db
-                                (when (cmd-types :new-db)
+                                (when (contains? cmd-types :new-db)
                                   (update-state/register-new-dbs txns state-atom block-map))
 
                                 (if (and is-next-block? server-allowed?)
                                   (do
-                                    ;; write out block data - todo: ensure raft shutdown happens successfully if write fails
-                                    (storage-write file-key (avro/serialize-block block-map))
-
                                     ;; update current block, and remove txids from queue
                                     (swap! state-atom
                                            (fn [state] (update-state/update-ledger-block network dbid txids state block)))
