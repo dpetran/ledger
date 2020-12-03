@@ -217,8 +217,11 @@
   - dbid
   - instant
 
- Commands can optionally contain multiTx, which allows for multiple transactions to be handle together in the same block. In order for multiTx to be allowed, all transactions need to be in the queue.
- The order of txns listed in the last txn submitted is the order in which the transactions are processed."
+  Commands can optionally contain multiTx, which allows for multiple
+  transactions to be handle together in the same block. In order for multiTx to
+  be allowed, all transactions need to be in the queue. The order of txns listed
+  in the last txn submitted is the order in which the transactions are
+  processed."
   [db cmd-queue]
   ;; TODO - need to check each command id to ensure it hasn't yet been processed
   (let [max-size     2e6                                    ;; two mb, TODO - pull from db settings
