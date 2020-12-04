@@ -5,6 +5,7 @@
             [fluree.db.flake :as flake]
             [fluree.db.util.async :refer [go-try <? <??]]
             [fluree.db.ledger.txgroup.txgroup-proto :as txproto]
+            [fluree.db.ledger.indexing :as indexing]
             [fluree.db.constants :as const]
             [clojure.string :as str]
             [clojure.java.io :as io])
@@ -29,9 +30,8 @@
             (log/info (str "Updating indexes " idx-points " for db: " db-ident))
             (doseq [idx-point idx-points]
               (log/info (str " - Updating index " idx-point " for db: " db-ident))
-              (let [db-root (<? (storage/read-db-root conn network dbid idx-point))
-                    indexes [:spot :psot :post :opst :taspo]]
-                (doseq [idx-type indexes]
+              (let [db-root (<? (storage/read-db-root conn network dbid idx-point))]
+                (doseq [idx-type indexing/types]
                   (let [root-idx-key (-> db-root (get idx-type) :id)
                         branch-data  (<? (storage/read-branch conn root-idx-key))
                         new-children (loop [[child & r] (:children branch-data)

@@ -4,7 +4,8 @@
             [fluree.db.dbproto :as dbproto]
             [fluree.db.session :as session]
             [fluree.db.util.async :refer [go-try <?]]
-            [fluree.db.ledger.txgroup.txgroup-proto :as txproto]))
+            [fluree.db.ledger.txgroup.txgroup-proto :as txproto]
+            [fluree.db.ledger.indexing :as indexing]))
 
 ;; for deleting a current db
 
@@ -34,9 +35,8 @@
   (go-try
     (let [session  (session/session conn (str network "/" dbid))
           blank-db (:blank-db session)
-          db       (<? (storage/reify-db conn network dbid blank-db idx-point))
-          idxs     [:spot :psot :post :opst :taspo]]
-      (doseq [idx idxs]
+          db       (<? (storage/reify-db conn network dbid blank-db idx-point))]
+      (doseq [idx indexing/types]
         (<? (delete-all-index-children conn (get db idx)))))))
 
 (defn all-versions

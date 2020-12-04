@@ -13,12 +13,11 @@
            (java.time Instant)))
 
 
-;;; run an indexing processing a database
+(def types #{:spot :psot :post :opst :taspo})
+
 
 (def ^:dynamic *overflow-bytes* 500000)
 (def ^:dynamic *underflow-bytes* 50000)
-
-;; an index is dirty if there is any novelty associated with it
 
 
 (defn overflow?
@@ -331,7 +330,7 @@
    (index-root db progress-atom idx-type #{}))
   ([db progress-atom idx-type remove-preds]
    (go-try
-    (assert (#{:spot :psot :post :opst :taspo} idx-type)
+    (assert (contains? types idx-type)
             (str "Reindex attempt on unknown index type: " idx-type))
      (let [{:keys [conn novelty block t network dbid]} db
            idx-novelty (get novelty idx-type)
@@ -355,7 +354,7 @@
   ([db {:keys [status message ecount remove-preds]}]
    (go-try
      (let [{:keys [novelty block t network dbid]} db
-           db-dirty?    (or (some #(not-empty (get novelty %)) [:spot :psot :post :opst :taspo])
+           db-dirty?    (or (some #(not-empty (get novelty %)) types)
                             remove-preds)
            novelty-size (:size novelty)
            progress     (atom {:garbage   []                ;; hold keys of old index segments we can garbage collect

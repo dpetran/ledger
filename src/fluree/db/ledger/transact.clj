@@ -812,13 +812,12 @@
   "Assigns a tempid to all index roots, which ensures caching for this candidate db
   is independent from any 'official' db with the same block."
   [db]
-  (let [tempid  (UUID/randomUUID)
-        indexes [:spot :psot :post :opst :taspo]]
+  (let [tempid  (UUID/randomUUID)]
     (reduce
       (fn [db idx]
         (let [index (assoc (get db idx) :tempid tempid)]
           (assoc db idx index)))
-      db indexes)))
+      db indexing/types)))
 
 (defn adding-data?
   [new-flakes]
