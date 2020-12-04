@@ -159,6 +159,11 @@
      (flake/new-flake db-setting-id (get pred->id "_setting/language") (get ident->id ["_tag/id" "_setting/language:en"]) t true)
      (flake/new-flake db-setting-id (get pred->id "_setting/id") "root" t true)]))
 
+(defn parse-db-name
+  [db-name]
+  (if (sequential? db-name)
+    db-name
+    (str/split db-name #"/")))
 
 (defn bootstrap-db
   "Bootstraps a new db from a signed new-db message."
@@ -167,12 +172,7 @@
     (let [conn             (:conn system)
           {:keys [cmd sig]} command
           txid             (crypto/sha3-256 cmd)
-          new-db-name      (-> cmd
-                               (json/parse)
-                               :db)
-          [network dbid] (if (sequential? new-db-name)
-                           new-db-name
-                           (str/split new-db-name #"/"))
+          [network dbid]   (-> cmd json/parse :db parse-db-name)
           db               (session/blank-db conn [network dbid])
           master-authid    (crypto/account-id-from-message cmd sig)
           auth-subid       (flake/->sid 6 0)
