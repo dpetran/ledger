@@ -224,7 +224,6 @@
                    :new-block (let [[_ network dbid block-map submission-server] command
                                     {:keys [block txns cmd-types]} block-map
                                     txids           (keys txns)
-                                    file-key        (storage/ledger-block-key network dbid block)
                                     current-block   (get-in @state-atom [:networks network :dbs dbid :block])
                                     is-next-block?  (if current-block
                                                       (= block (inc current-block))

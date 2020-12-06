@@ -165,29 +165,40 @@
     db-name
     (str/split db-name #"/")))
 
+(defn initialize-ledger
+  "Initializes a blank ledger with network `network` and id `dbid`, validating
+  that neither a ledger nor a first block on disk exists with the same network
+  and id"
+  [{:keys [group] :as conn} network dbid]
+  (go-try
+   (if-not (or (txproto/ledger-exists? group network dbid)
+               (<? (storage/block conn network dbid 1)))
+     (session/blank-db conn [network dbid])
+     (throw (ex-info (str "Ledger " network "/$" dbid " already exists!"
+                          " Create unsuccessful.")
+                     {:status 500, :error :db/unexpected-error})))))
+
 (defn bootstrap-db
   "Bootstraps a new db from a signed new-db message."
   [system command]
   (go-try
-    (let [conn             (:conn system)
+    (let [conn              (:conn system)
           {:keys [cmd sig]} command
-          txid             (crypto/sha3-256 cmd)
-          [network dbid]   (-> cmd json/parse :db parse-db-name)
-          db               (session/blank-db conn [network dbid])
-          master-authid    (crypto/account-id-from-message cmd sig)
-          auth-subid       (flake/->sid 6 0)
-          timestamp        (System/currentTimeMillis)
-          {:keys [dbid network novelty stats]} db
-          _                (when (or (txproto/ledger-exists? (:group system) network dbid)
-                                     ;; also check for block 1 on disk as a precaution
-                                     (<? (storage/block conn network dbid 1)))
-                             (throw (ex-info (str "Ledger " network "/$" dbid " already exists! Create unsuccessful.")
-                                             {:status 500
-                                              :error  :db/unexpected-error})))
-          block            1
-          t                -1
+          txid              (crypto/sha3-256 cmd)
+          [network dbid]    (-> cmd json/parse :db parse-db-name)
+          master-authid     (crypto/account-id-from-message cmd sig)
+          auth-subid        (flake/->sid 6 0)
+          timestamp         (System/currentTimeMillis)
+          block             1
+          t                 -1
           block-t          -2
-          {:keys [fparts index-pred ref-pred pred->id ident->id]} (bootstrap-data->fparts bootstrap-txn)
+
+          {:keys [dbid network novelty stats] :as db}
+          (<? (initialize-ledger conn network dbid))
+
+          {:keys [fparts index-pred ref-pred pred->id ident->id]}
+          (bootstrap-data->fparts bootstrap-txn)
+
           flakes           (reduce (fn [acc [s p o]]
                                      (conj acc (flake/new-flake s p o t true)))
                                    (flake/sorted-set-by flake/cmp-flakes-spot-novelty) fparts)
