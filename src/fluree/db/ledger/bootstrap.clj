@@ -12,8 +12,7 @@
             [fluree.db.util.log :as log])
   (:import (fluree.db.flake Flake)))
 
-(declare bootstrap-txn)
-
+(declare bootstrap-flake-parts)
 
 (defn get-block-hash
   "Note this must be in the proper sort order before executing"
@@ -22,75 +21,6 @@
        (mapv #(vector (.-s %) (.-p %) (.-o %) (.-t %) (.-op %) (.-m %)))
        (json/stringify)
        (crypto/sha3-256)))
-
-
-(defn bootstrap-data->fparts
-  [bootstrap-txn]
-  (let [collection->id (->> bootstrap-txn
-                            (filter #(= "_collection" (-> % :_id first)))
-                            (reduce
-                              (fn [acc txi]
-                                (assoc acc (:name txi) (-> txi :_id second)))
-                              {}))
-        ident->id      (->> bootstrap-txn
-                            (reduce
-                              (fn [acc txi]
-                                (let [[collection sid] (:_id txi)
-                                      cid        (get collection->id collection)
-                                      subject-id (flake/->sid cid sid)]
-                                  (reduce-kv
-                                    (fn [acc2 k v] (assoc acc2 [(str (name collection) "/" (name k)) v] subject-id))
-                                    acc (dissoc txi :_id))))
-                              {}))
-        ;; predicate name to final predicate id.. i.e {"_user/username" 10}
-        predicate->id  (->> bootstrap-txn
-                            (filter #(= "_predicate" (-> % :_id first)))
-                            (reduce
-                              (fn [acc txi]
-                                (assoc acc (:name txi) (-> txi :_id (second))))
-                              {}))
-        tag-pred?      (->> bootstrap-txn
-                            (filter #(and (= "_predicate" (-> % :_id first))
-                                          (= "tag" (:type %))))
-                            (map :name)
-                            (into #{}))
-        ref-pred       (->> bootstrap-txn
-                            ;; for now, only things that point to _collection/collection are refs. This logic will have to evolve as needed
-                            (filter #(and (= "_predicate" (-> % :_id first))
-                                          (or (= "ref" (:type %))
-                                              (= "tag" (:type %)))))
-                            (map #(-> % :_id second))
-                            (into #{}))
-        index-pred     (->> bootstrap-txn
-                            (filter #(and (= "_predicate" (-> % :_id first))
-                                          (or (:index %)
-                                              (:unique %))))
-                            (map #(-> % :_id second))
-                            ;; all ref predicates are indexed as well, so add them in.
-                            (into ref-pred))
-        fparts         (->> bootstrap-txn
-                            (reduce
-                              (fn [acc txi]
-                                (let [[collection sid] (:_id txi)
-                                      cid        (get collection->id collection)
-                                      subject-id (flake/->sid cid sid)]
-                                  (reduce-kv
-                                    (fn [acc2 k v]
-                                      (let [p-str (str (name collection) "/" (name k))
-                                            p     (get predicate->id p-str)
-                                            v     (cond
-                                                    (vector? v) (get ident->id v)
-                                                    (tag-pred? p-str) (get ident->id ["_tag/id" (str p-str ":" v)])
-                                                    :else v)]
-                                        (conj acc2 [subject-id p v])))
-                                    acc
-                                    (dissoc txi :_id))))
-                              []))]
-    {:fparts     fparts
-     :index-pred index-pred
-     :ref-pred   ref-pred
-     :pred->id   predicate->id
-     :ident->id  ident->id}))
 
 
 ;; TODO - too easy to forget to adjust this if we add a new collection type - we should
@@ -197,7 +127,7 @@
           (<? (initialize-ledger conn network dbid))
 
           {:keys [fparts index-pred ref-pred pred->id ident->id]}
-          (bootstrap-data->fparts bootstrap-txn)
+          bootstrap-flake-parts
 
           flakes           (reduce (fn [acc [s p o]]
                                      (conj acc (flake/new-flake s p o t true)))
@@ -845,3 +775,70 @@
     :name "_shard/mutable"
     :doc  "Whether this shard is mutable. If not specified, defaults to 'false', meaning the data is immutable."
     :type "boolean"}])
+
+(def bootstrap-flake-parts
+  (let [collection->id (->> bootstrap-txn
+                            (filter #(= "_collection" (-> % :_id first)))
+                            (reduce
+                             (fn [acc txi]
+                               (assoc acc (:name txi) (-> txi :_id second)))
+                             {}))
+        ident->id      (->> bootstrap-txn
+                            (reduce
+                             (fn [acc txi]
+                               (let [[collection sid] (:_id txi)
+                                     cid        (get collection->id collection)
+                                     subject-id (flake/->sid cid sid)]
+                                 (reduce-kv
+                                  (fn [acc2 k v] (assoc acc2 [(str (name collection) "/" (name k)) v] subject-id))
+                                  acc (dissoc txi :_id))))
+                             {}))
+        ;; predicate name to final predicate id.. i.e {"_user/username" 10}
+        predicate->id  (->> bootstrap-txn
+                            (filter #(= "_predicate" (-> % :_id first)))
+                            (reduce
+                             (fn [acc txi]
+                               (assoc acc (:name txi) (-> txi :_id (second))))
+                             {}))
+        tag-pred?      (->> bootstrap-txn
+                            (filter #(and (= "_predicate" (-> % :_id first))
+                                          (= "tag" (:type %))))
+                            (map :name)
+                            (into #{}))
+        ref-pred       (->> bootstrap-txn
+                            ;; for now, only things that point to _collection/collection are refs. This logic will have to evolve as needed
+                            (filter #(and (= "_predicate" (-> % :_id first))
+                                          (or (= "ref" (:type %))
+                                              (= "tag" (:type %)))))
+                            (map #(-> % :_id second))
+                            (into #{}))
+        index-pred     (->> bootstrap-txn
+                            (filter #(and (= "_predicate" (-> % :_id first))
+                                          (or (:index %)
+                                              (:unique %))))
+                            (map #(-> % :_id second))
+                            ;; all ref predicates are indexed as well, so add them in.
+                            (into ref-pred))
+        fparts         (->> bootstrap-txn
+                            (reduce
+                             (fn [acc txi]
+                               (let [[collection sid] (:_id txi)
+                                     cid        (get collection->id collection)
+                                     subject-id (flake/->sid cid sid)]
+                                 (reduce-kv
+                                  (fn [acc2 k v]
+                                    (let [p-str (str (name collection) "/" (name k))
+                                          p     (get predicate->id p-str)
+                                          v     (cond
+                                                  (vector? v) (get ident->id v)
+                                                  (tag-pred? p-str) (get ident->id ["_tag/id" (str p-str ":" v)])
+                                                  :else v)]
+                                      (conj acc2 [subject-id p v])))
+                                  acc
+                                  (dissoc txi :_id))))
+                             []))]
+    {:fparts     fparts
+     :index-pred index-pred
+     :ref-pred   ref-pred
+     :pred->id   predicate->id
+     :ident->id  ident->id}))
