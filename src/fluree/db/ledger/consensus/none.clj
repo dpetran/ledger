@@ -79,9 +79,6 @@
 
                                 (if is-next-block?
                                   (do
-                                    ;; write out block data - todo: ensure raft shutdown happens successfully if write fails
-                                    (memorystore/connection-storage-write file-key block-map)
-
                                     ;; update current block, and remove txids from queue
                                     (swap! state-atom
                                            (fn [state] (update-state/update-ledger-block network dbid txids state block)))
@@ -233,5 +230,3 @@ Events include:
          :close            close-fn
          :open-api         open-api}
         map->InMemoryGroup)))
-
-

@@ -150,6 +150,7 @@
    (let [timestamp      (System/currentTimeMillis)
          txid           (crypto/sha3-256 cmd)
          [network dbid] (-> cmd json/parse :db parse-db-name)
+
          flakes         (initial-flakes cmd sig txid timestamp)
          flake-size     (flake/size-bytes flakes)
          flake-count    (count flakes)
@@ -177,7 +178,7 @@
              (update-in [:novelty :psot] into flakes)
              (update-in [:novelty :post] into post-flakes)
              (update-in [:novelty :opst] into opst-flakes)
-             (update-in [:novelty :taspo] into flakes)
+             (update-in [:novelty :tspo] into flakes)
              indexing/index
              <?)]
 

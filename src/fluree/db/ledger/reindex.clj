@@ -102,8 +102,8 @@
                      :psot  (into (:psot novelty) flakes)
                      :post  (into (:post novelty) post-flakes)
                      :opst  (into (:opst novelty) opst-flakes)
-                     :taspo (into (:taspo novelty) flakes)
-                     :size size}
+                     :tspo  (into (:tspo novelty) flakes)
+                     :size  size}
         t           (apply min (map #(.-t %) flakes))]
     (assoc blank-db :block 1
                     :t t

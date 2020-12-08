@@ -13,7 +13,7 @@
            (java.time Instant)))
 
 
-(def types #{:spot :psot :post :opst :taspo})
+(def types #{:spot :psot :post :opst :tspo})
 
 
 (def ^:dynamic *overflow-bytes* 500000)
@@ -323,7 +323,7 @@
 
 
 (defn index-root
-  "Indexes an index-type root (:spot, :psot, :post, :opst, or taspo).
+  "Indexes an index-type root (:spot, :psot, :post, :opst, or tspo).
 
   Progress atom tracks progress and retains list of garbage indexes."
   ([db progress-atom idx-type]
@@ -372,18 +372,18 @@
                psot-ch    (index-root db progress :psot)
                post-ch    (index-root db progress :post remove-preds)
                opst-ch    (index-root db progress :opst)
-               taspo-ch   (index-root db progress :taspo)
+               tspo-ch    (index-root db progress :tspo)
                indexed-db (-> db
                               (assoc :spot (<? spot-ch)
                                      :psot (<? psot-ch)
                                      :post (<? post-ch)
                                      :opst (<? opst-ch)
-                                     :taspo (<? taspo-ch))
+                                     :tspo (<? tspo-ch))
                               (update-in [:novelty :spot] empty) ;; retain sort order of indexes
                               (update-in [:novelty :psot] empty)
                               (update-in [:novelty :post] empty)
                               (update-in [:novelty :opst] empty)
-                              (update-in [:novelty :taspo] empty)
+                              (update-in [:novelty :tspo] empty)
                               (assoc-in [:novelty :size] 0)
                               (assoc-in [:stats :indexed] block))]
            ;; wait until confirmed writes before returning
@@ -511,12 +511,12 @@
           post-comp (.comparator (-> db :novelty :post))
           psot-comp (.comparator (-> db :novelty :psot))
           opst-comp (.comparator (-> db :novelty :opst))
-          taspo-comp (.comparator (-> db :novelty :taspo))]
+          tspo-comp (.comparator (-> db :novelty :tspo))]
       (do (validate-idx-continuity (:spot db) true spot-comp)
           (validate-idx-continuity (:post db) true post-comp)
           (validate-idx-continuity (:psot db) true psot-comp)
           (validate-idx-continuity (:opst db) true opst-comp)
-          (validate-idx-continuity (:taspo db) true taspo-comp))))
+          (validate-idx-continuity (:tspo db) true tspo-comp))))
 
   (check-ctnty db)
 
