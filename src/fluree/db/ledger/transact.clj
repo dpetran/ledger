@@ -15,6 +15,7 @@
             [fluree.crypto :as crypto]
             [fluree.db.dbproto :as dbproto]
             [fluree.db.auth :as auth]
+            [fluree.db.index :as index]
             [fluree.db.ledger.indexing :as indexing]
             [fluree.db.session :as session]
             [fluree.db.util.tx :as tx-util]
@@ -817,7 +818,7 @@
       (fn [db idx]
         (let [index (assoc (get db idx) :tempid tempid)]
           (assoc db idx index)))
-      db indexing/types)))
+      db index/types)))
 
 (defn adding-data?
   [new-flakes]

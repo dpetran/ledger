@@ -3,6 +3,7 @@
             [clojure.tools.logging :as log]
             [fluree.db.dbproto :as dbproto]
             [fluree.db.flake :as flake]
+            [fluree.db.index :as index]
             [fluree.db.storage.core :as storage]
             [fluree.db.session :as session]
             [clojure.core.async :as async]
@@ -11,9 +12,6 @@
             [fluree.db.ledger.txgroup.txgroup-proto :as txproto])
   (:import (fluree.db.flake Flake)
            (java.time Instant)))
-
-
-(def types #{:spot :psot :post :opst :tspo})
 
 
 (def ^:dynamic *overflow-bytes* 500000)
@@ -322,6 +320,13 @@
        new-node))))
 
 
+(defn dirty-idx?
+  [{:keys [novelty] :as db} idx-type]
+  (-> novelty
+      (get idx-type)
+      seq
+      boolean))
+
 (defn index-root
   "Indexes an index-type root (:spot, :psot, :post, :opst, or tspo).
 
@@ -330,12 +335,13 @@
    (index-root db progress-atom idx-type #{}))
   ([db progress-atom idx-type remove-preds]
    (go-try
-    (assert (contains? types idx-type)
+    (assert (contains? index/types idx-type)
             (str "Reindex attempt on unknown index type: " idx-type))
      (let [{:keys [conn novelty block t network dbid]} db
            idx-novelty (get novelty idx-type)
-           dirty?      (or (not (empty? idx-novelty)) remove-preds)
-           idx-root    (get db idx-type)]
+           idx-root    (get db idx-type)
+           dirty?      (or (dirty-idx? db idx-type)
+                           (seq remove-preds))]
        (if-not dirty?
          idx-root
          (do
@@ -345,7 +351,6 @@
 
 ;; TODO - should track new index segments and if failure, garbage collect them
 
-
 (defn index
   "Write each index type, writes happen from right to left in the tree
   so we know the 'rhs' value of each node going into it."
@@ -354,7 +359,7 @@
   ([db {:keys [status message ecount remove-preds]}]
    (go-try
      (let [{:keys [novelty block t network dbid]} db
-           db-dirty?    (or (some #(not-empty (get novelty %)) types)
+           db-dirty?    (or (some (partial dirty-idx? db) index/types)
                             remove-preds)
            novelty-size (:size novelty)
            progress     (atom {:garbage   []                ;; hold keys of old index segments we can garbage collect
