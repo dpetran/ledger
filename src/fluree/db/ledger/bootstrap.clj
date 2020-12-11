@@ -191,8 +191,7 @@
 
      (-> conn
          :group
-         (txproto/initialized-ledger-async txid network dbid block fork
-                                           (:indexed stats))
+         (txproto/initialized-ledger-async txid network dbid block fork (:indexed stats))
          <?)
 
      new-ledger)))

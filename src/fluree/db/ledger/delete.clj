@@ -5,7 +5,7 @@
             [fluree.db.session :as session]
             [fluree.db.util.async :refer [go-try <?]]
             [fluree.db.ledger.txgroup.txgroup-proto :as txproto]
-            [fluree.db.ledger.index :as index]
+            [fluree.db.index :as index]
             [fluree.db.ledger.indexing :as indexing]))
 
 ;; for deleting a current db
