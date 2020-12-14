@@ -140,30 +140,41 @@
 
         hash            (get-block-hash hashable-flakes)
         block-flakes    [(flake/new-flake initial-block-t (get pred->id "_block/hash") hash initial-block-t true)
-                         (flake/new-flake initial-block-t (get pred->id "_block/ledgers") auth-subid initial-block-t true)]]
-    (into hashable-flakes block-flakes)))
+                         (flake/new-flake initial-block-t (get pred->id "_block/ledgers") auth-subid initial-block-t true)]
+        flakes          (into hashable-flakes block-flakes)
+        initial-block   {:block  initial-block
+                         :t      initial-block-t
+                         :flakes flakes
+                         :hash   hash
+                         :txns   {txid {:t   initial-t
+                                        :cmd cmd
+                                        :sig sig}}}]
+    [flakes hash initial-block]))
+
 
 (defn bootstrap-db
   "Bootstraps a new db from a signed new-db message."
   [{:keys [conn]} {:keys [cmd sig]}]
   (go-try
-   (let [timestamp      (System/currentTimeMillis)
-         txid           (crypto/sha3-256 cmd)
-         [network dbid] (-> cmd json/parse :db parse-db-name)
+   (let [timestamp           (System/currentTimeMillis)
+         txid                (crypto/sha3-256 cmd)
+         [network dbid]      (-> cmd json/parse :db parse-db-name)
 
-         flakes         (initial-flakes cmd sig txid timestamp)
-         flake-size     (flake/size-bytes flakes)
-         flake-count    (count flakes)
+         [flakes hash block] (initial-flakes cmd sig txid timestamp)
+         flake-size          (flake/size-bytes flakes)
+         flake-count         (count flakes)
 
          {:keys [index-pred ref-pred]}
          bootstrap-flake-parts
 
-         post-flakes    (filter (fn [^Flake f]
-                                  (-> f .-p index-pred))
-                                flakes)
-         opst-flakes    (filter (fn [^Flake f]
-                                  (-> f .-p ref-pred))
-                                flakes)
+         post-flakes         (filter (fn [^Flake f]
+                                       (-> f .-p index-pred))
+                                     flakes)
+         opst-flakes         (filter (fn [^Flake f]
+                                       (-> f .-p ref-pred))
+                                     flakes)
+
+         _                   (<? (storage/write-block conn network dbid block))
 
          {:keys [block fork stats] :as new-ledger}
          (-> conn
