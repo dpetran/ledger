@@ -43,6 +43,16 @@
   (alter-var-root #'system (constantly (server/startup (merge @config opts))))
   :started)
 
+(defn initialize
+  [opts]
+  (start opts)
+  @(fdb/new-ledger (:conn system) ledger-endpoints)
+  @(fdb/new-ledger (:conn system) ledger-query+transact)
+  @(fdb/new-ledger (:conn system) ledger-chat)
+  @(fdb/new-ledger (:conn system) ledger-crypto)
+  @(fdb/new-ledger (:conn system) ledger-voting)
+  @(fdb/new-ledger (:conn system) ledger-supplychain)
+  (async/<!! (async/timeout 15000)))
 
 (defn stop []
   (print-banner "STOPPING")
@@ -55,14 +65,7 @@
    (test-system f {}))
   ([f opts]
    (try
-     (do (start opts)
-         @(fdb/new-ledger (:conn system) ledger-endpoints)
-         @(fdb/new-ledger (:conn system) ledger-query+transact)
-         @(fdb/new-ledger (:conn system) ledger-chat)
-         @(fdb/new-ledger (:conn system) ledger-crypto)
-         @(fdb/new-ledger (:conn system) ledger-voting)
-         @(fdb/new-ledger (:conn system) ledger-supplychain)
-         (async/<!! (async/timeout 15000))
+     (do (initialize opts)
          (f))
      :success
      (catch Exception e (log/error "Caught test exception" e)
