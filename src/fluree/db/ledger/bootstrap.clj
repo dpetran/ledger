@@ -99,7 +99,7 @@
     db-name
     (str/split db-name #"/")))
 
-(defn initialize-ledger
+(defn new-ledger
   "Initializes a blank ledger with network `network` and id `dbid`, validating
   that neither a ledger nor a first block on disk exists with the same network
   and id"
@@ -187,7 +187,7 @@
 
          {:keys [block fork stats] :as new-ledger}
          (-> conn
-             (initialize-ledger network dbid)
+             (new-ledger network dbid)
              <?
              (assoc :block  initial-block
                     :t      initial-block-t
