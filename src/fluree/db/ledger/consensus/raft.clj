@@ -224,6 +224,7 @@
                    :new-block (let [[_ network dbid block-map submission-server] command
                                     {:keys [block txns cmd-types]} block-map
                                     txids           (keys txns)
+                                    file-key        (storage/ledger-block-key network dbid block)
                                     current-block   (get-in @state-atom [:networks network :dbs dbid :block])
                                     is-next-block?  (if current-block
                                                       (= block (inc current-block))
@@ -236,6 +237,9 @@
 
                                 (if (and is-next-block? server-allowed?)
                                   (do
+                                    ;; write out block data - todo: ensure raft shutdown happens successfully if write fails
+                                    (storage-write file-key (avro/serialize-block block-map))
+
                                     ;; update current block, and remove txids from queue
                                     (swap! state-atom
                                            (fn [state] (update-state/update-ledger-block network dbid txids state block)))
