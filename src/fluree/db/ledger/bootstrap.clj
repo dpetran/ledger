@@ -14,8 +14,8 @@
 
 (declare bootstrap-flake-parts)
 
-(def initial-block   1)
-(def initial-t       -1)
+(def initial-block 1)
+(def initial-t -1)
 (def initial-block-t -2)
 
 (defn get-block-hash
@@ -152,9 +152,20 @@
     [flakes hash initial-block]))
 
 
+(defn write-first-block
+  [conn network dbid txid flakes hsh cmd sig]
+  (let [block-data {:block  initial-block
+                    :t      initial-block-t
+                    :flakes flakes
+                    :hash   hsh
+                    :txns   {txid {:t   initial-t
+                                   :cmd cmd
+                                   :sig sig}}}]
+    (storage/write-block conn network dbid block-data)))
+
 (defn bootstrap-db
   "Bootstraps a new db from a signed new-db message."
-  [{:keys [conn]} {:keys [cmd sig]}]
+  [{:keys [conn group]} {:keys [cmd sig]}]
   (go-try
    (let [timestamp           (System/currentTimeMillis)
          txid                (crypto/sha3-256 cmd)
@@ -174,36 +185,31 @@
                                        (-> f .-p ref-pred))
                                      flakes)
 
-         _                   (<? (storage/write-block conn network dbid block))
-
          {:keys [block fork stats] :as new-ledger}
          (-> conn
              (initialize-ledger network dbid)
              <?
              (assoc :block  initial-block
                     :t      initial-block-t
-                    :ecount genesis-ecount
-                    :size   flake-size)
+                    :ecount genesis-ecount)
              (update :stats assoc :flakes flake-count, :size flake-size)
              (update-in [:novelty :spot] into flakes)
              (update-in [:novelty :psot] into flakes)
              (update-in [:novelty :post] into post-flakes)
              (update-in [:novelty :opst] into opst-flakes)
              (update-in [:novelty :tspo] into flakes)
+             (assoc-in [:novelty :size] flake-size)
              indexing/index
              <?)]
 
+     (<? (write-first-block conn network dbid txid flakes hash cmd sig))
+
      ;; TODO should create a new command to register new DB that first checks
      ;;      raft
-     (-> conn
-         :group
-         (txproto/register-genesis-block-async network dbid)
-         <?)
+     (<? (txproto/register-genesis-block-async group network dbid))
 
-     (-> conn
-         :group
-         (txproto/initialized-ledger-async txid network dbid block fork (:indexed stats))
-         <?)
+     ;; write out new index point
+     (<? (txproto/initialized-ledger-async group txid network dbid block fork (:indexed stats)))
 
      new-ledger)))
 
