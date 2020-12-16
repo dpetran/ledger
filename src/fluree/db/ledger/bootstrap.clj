@@ -14,7 +14,7 @@
 
 (declare bootstrap-flake-parts)
 
-(def initial-block 1)
+(def initial-block-num 1)
 (def initial-t -1)
 (def initial-block-t -2)
 
@@ -142,7 +142,7 @@
         block-flakes    [(flake/new-flake initial-block-t (get pred->id "_block/hash") hash initial-block-t true)
                          (flake/new-flake initial-block-t (get pred->id "_block/ledgers") auth-subid initial-block-t true)]
         flakes          (into hashable-flakes block-flakes)
-        initial-block   {:block  initial-block
+        initial-block   {:block  initial-block-num
                          :t      initial-block-t
                          :flakes flakes
                          :hash   hash
@@ -152,17 +152,6 @@
     [flakes hash initial-block]))
 
 
-(defn write-first-block
-  [conn network dbid txid flakes hsh cmd sig]
-  (let [block-data {:block  initial-block
-                    :t      initial-block-t
-                    :flakes flakes
-                    :hash   hsh
-                    :txns   {txid {:t   initial-t
-                                   :cmd cmd
-                                   :sig sig}}}]
-    (storage/write-block conn network dbid block-data)))
-
 (defn bootstrap-db
   "Bootstraps a new db from a signed new-db message."
   [{:keys [conn group]} {:keys [cmd sig]}]
@@ -171,7 +160,7 @@
          txid                (crypto/sha3-256 cmd)
          [network dbid]      (-> cmd json/parse :db parse-db-name)
 
-         [flakes hash block] (initial-flakes cmd sig txid timestamp)
+         [flakes hash initial-block] (initial-flakes cmd sig txid timestamp)
          flake-size          (flake/size-bytes flakes)
          flake-count         (count flakes)
 
@@ -185,13 +174,13 @@
                                        (-> f .-p ref-pred))
                                      flakes)
 
+         block-info          (select-keys initial-block [:block :t])
          {:keys [block fork stats] :as new-ledger}
          (-> conn
              (new-ledger network dbid)
              <?
-             (assoc :block  initial-block
-                    :t      initial-block-t
-                    :ecount genesis-ecount)
+             (merge block-info)
+             (assoc :ecount genesis-ecount)
              (update :stats assoc :flakes flake-count, :size flake-size)
              (update-in [:novelty :spot] into flakes)
              (update-in [:novelty :psot] into flakes)
@@ -202,7 +191,7 @@
              indexing/index
              <?)]
 
-     (<? (write-first-block conn network dbid txid flakes hash cmd sig))
+     (<? (storage/write-block conn network dbid initial-block))
 
      ;; TODO should create a new command to register new DB that first checks
      ;;      raft
