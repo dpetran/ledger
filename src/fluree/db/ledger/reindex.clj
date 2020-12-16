@@ -10,7 +10,7 @@
             [clojure.core.async :as async]
             [fluree.db.ledger.txgroup.txgroup-proto :as txproto]
             [fluree.db.util.async :refer [<? <?? go-try]]
-            [fluree.db.ledger.bootstrap :as bootstrap])
+            [fluree.db.ledger.bootstrap.genesis :as genesis])
   (:import (fluree.db.flake Flake)))
 
 ;; 1) start from block 1
@@ -107,7 +107,7 @@
         t           (apply min (map #(.-t %) flakes))]
     (assoc blank-db :block 1
                     :t t
-                    :ecount bootstrap/genesis-ecount
+                    :ecount genesis/ecount
                     :novelty novelty*
                     :stats {:flakes (count flakes)
                             :size   size})))
