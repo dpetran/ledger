@@ -21,9 +21,10 @@
   "Note this must be in the proper sort order before executing"
   [flakes]
   (->> flakes
-       (mapv #(vector (.-s %) (.-p %) (.-o %) (.-t %) (.-op %) (.-m %)))
-       (json/stringify)
-       (crypto/sha3-256)))
+       (mapv (fn [^Flake flk]
+               [(.-s flk) (.-p flk) (.-o flk) (.-t flk) (.-op flk) (.-m flk)]))
+       json/stringify
+       crypto/sha3-256))
 
 
 (defn master-auth-flake
@@ -171,7 +172,7 @@
 
          first-block    (initial-block cmd sig txid timestamp)
 
-         {:keys [block fork stats] :as new-ledger}
+         {:keys [block fork stats] :as new-db}
          (-> conn
              (new-ledger network dbid)
              <?
@@ -188,7 +189,7 @@
      ;; write out new index point
      (<? (txproto/initialized-ledger-async group txid network dbid block fork (:indexed stats)))
 
-     new-ledger)))
+     new-db)))
 
 
 (defn create-network-bootstrap-command
