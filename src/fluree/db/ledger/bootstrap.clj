@@ -112,7 +112,7 @@
                           " Create unsuccessful.")
                      {:status 500, :error :db/unexpected-error})))))
 
-(defn initial-flakes
+(defn initial-block
   [cmd sig txid ts]
   (let [{:keys [fparts pred->id ident->id]}
         bootstrap-flake-parts
@@ -141,57 +141,61 @@
         hash            (get-block-hash hashable-flakes)
         block-flakes    [(flake/new-flake initial-block-t (get pred->id "_block/hash") hash initial-block-t true)
                          (flake/new-flake initial-block-t (get pred->id "_block/ledgers") auth-subid initial-block-t true)]
-        flakes          (into hashable-flakes block-flakes)
-        initial-block   {:block  initial-block-num
-                         :t      initial-block-t
-                         :flakes flakes
-                         :hash   hash
-                         :txns   {txid {:t   initial-t
-                                        :cmd cmd
-                                        :sig sig}}}]
-    [flakes hash initial-block]))
+        flakes          (into hashable-flakes block-flakes)]
+    {:block  initial-block-num
+     :t      initial-block-t
+     :flakes flakes
+     :hash   hash
+     :txns   {txid {:t   initial-t
+                    :cmd cmd
+                    :sig sig}}}))
+
+(defn initialize-ledger
+  [ledger {:keys [block flakes t] :as initial-block}]
+  (let [flake-size  (flake/size-bytes flakes)
+        flake-count (count flakes)
+
+        {:keys [index-pred ref-pred]}
+        bootstrap-flake-parts
+
+        post-flakes (filter (fn [^Flake f]
+                              (-> f .-p index-pred))
+                            flakes)
+        opst-flakes (filter (fn [^Flake f]
+                              (-> f .-p ref-pred))
+                            flakes)]
+    (-> ledger
+        (assoc :block  block
+               :t      t
+               :ecount genesis-ecount)
+        (update :stats assoc :flakes flake-count, :size flake-size)
+        (update-in [:novelty :spot] into flakes)
+        (update-in [:novelty :psot] into flakes)
+        (update-in [:novelty :post] into post-flakes)
+        (update-in [:novelty :opst] into opst-flakes)
+        (update-in [:novelty :tspo] into flakes)
+        (assoc-in [:novelty :size] flake-size))))
 
 
 (defn bootstrap-db
   "Bootstraps a new db from a signed new-db message."
   [{:keys [conn group]} {:keys [cmd sig]}]
   (go-try
-   (let [timestamp           (System/currentTimeMillis)
-         txid                (crypto/sha3-256 cmd)
-         [network dbid]      (-> cmd json/parse :db parse-db-name)
+   (let [timestamp      (System/currentTimeMillis)
+         txid           (crypto/sha3-256 cmd)
+         [network dbid] (-> cmd json/parse :db parse-db-name)
 
-         [flakes hash initial-block] (initial-flakes cmd sig txid timestamp)
-         flake-size          (flake/size-bytes flakes)
-         flake-count         (count flakes)
+         first-block    (initial-block cmd sig txid timestamp)
 
-         {:keys [index-pred ref-pred]}
-         bootstrap-flake-parts
-
-         post-flakes         (filter (fn [^Flake f]
-                                       (-> f .-p index-pred))
-                                     flakes)
-         opst-flakes         (filter (fn [^Flake f]
-                                       (-> f .-p ref-pred))
-                                     flakes)
-
-         block-info          (select-keys initial-block [:block :t])
          {:keys [block fork stats] :as new-ledger}
          (-> conn
              (new-ledger network dbid)
              <?
-             (merge block-info)
-             (assoc :ecount genesis-ecount)
-             (update :stats assoc :flakes flake-count, :size flake-size)
-             (update-in [:novelty :spot] into flakes)
-             (update-in [:novelty :psot] into flakes)
-             (update-in [:novelty :post] into post-flakes)
-             (update-in [:novelty :opst] into opst-flakes)
-             (update-in [:novelty :tspo] into flakes)
-             (assoc-in [:novelty :size] flake-size)
+             (initialize-ledger first-block)
              indexing/index
              <?)]
 
-     (<? (storage/write-block conn network dbid initial-block))
+     (<? (storage/write-block conn network dbid first-block))
 
      ;; TODO should create a new command to register new DB that first checks
      ;;      raft
