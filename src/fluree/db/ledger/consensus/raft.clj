@@ -221,8 +221,12 @@
                    ;; (a) the submission-server is currently the worker for the network
                    ;; (b) the block-id is exactly one block increment from the previous block
                    ;; if it contains a command-type of :new-db, we also establish a new db record
-                   :new-block (let [[_ network dbid block-map submission-server] command
-                                    {:keys [block txns cmd-types]} block-map
+                   :new-block (let [[_ network dbid block-map submission-server]
+                                    command
+
+                                    {:keys [block txns cmd-types]}
+                                    block-map
+
                                     txids           (keys txns)
                                     file-key        (storage/ledger-block-key network dbid block)
                                     current-block   (get-in @state-atom [:networks network :dbs dbid :block])

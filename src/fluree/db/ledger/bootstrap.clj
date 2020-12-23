@@ -1,15 +1,17 @@
 (ns fluree.db.ledger.bootstrap
   (:require [clojure.string :as str]
+            [clojure.core.async :as async]
+            [fluree.db.util.async :refer [go-try <?]]
             [fluree.db.ledger.bootstrap.genesis :as genesis]
             [fluree.db.flake :as flake]
             [fluree.crypto :as crypto]
             [fluree.db.storage.core :as storage]
+            [fluree.db.util.core :refer [exception?]]
             [fluree.db.util.json :as json]
             [fluree.db.constants :as const]
             [fluree.db.session :as session]
             [fluree.db.ledger.indexing :as indexing]
             [fluree.db.ledger.txgroup.txgroup-proto :as txproto]
-            [fluree.db.util.async :refer [go-try <?]]
             [fluree.db.util.log :as log])
   (:import (fluree.db.flake Flake)))
 
@@ -137,59 +139,67 @@
 
 (defn initialize-db
   [ledger {:keys [block flakes t] :as initial-block}]
-  (let [flake-size  (flake/size-bytes flakes)
-        flake-count (count flakes)
+  (if (exception? ledger)
+    ledger
+    (let [flake-size  (flake/size-bytes flakes)
+          flake-count (count flakes)
 
-        {:keys [index-pred ref-pred]}
-        genesis/flake-parts
+          {:keys [index-pred ref-pred]}
+          genesis/flake-parts
 
-        post-flakes (filter (fn [^Flake f]
-                              (-> f .-p index-pred))
-                            flakes)
-        opst-flakes (filter (fn [^Flake f]
-                              (-> f .-p ref-pred))
-                            flakes)]
-    (-> ledger
-        (assoc :block  block
-               :t      t
-               :ecount genesis/ecount)
-        (update :stats assoc :flakes flake-count, :size flake-size)
-        (update-in [:novelty :spot] into flakes)
-        (update-in [:novelty :psot] into flakes)
-        (update-in [:novelty :post] into post-flakes)
-        (update-in [:novelty :opst] into opst-flakes)
-        (update-in [:novelty :tspo] into flakes)
-        (assoc-in [:novelty :size] flake-size))))
+          post-flakes (filter (fn [^Flake f]
+                                (-> f .-p index-pred))
+                              flakes)
+          opst-flakes (filter (fn [^Flake f]
+                                (-> f .-p ref-pred))
+                              flakes)]
+      (-> ledger
+          (assoc :block  block
+                 :t      t
+                 :ecount genesis/ecount)
+          (update :stats assoc :flakes flake-count, :size flake-size)
+          (update-in [:novelty :spot] into flakes)
+          (update-in [:novelty :psot] into flakes)
+          (update-in [:novelty :post] into post-flakes)
+          (update-in [:novelty :opst] into opst-flakes)
+          (update-in [:novelty :tspo] into flakes)
+          (assoc-in [:novelty :size] flake-size)))))
 
 
 (defn bootstrap-db
   "Bootstraps a new db from a signed new-db message."
   [{:keys [conn group]} {:keys [cmd sig]}]
-  (go-try
-   (let [timestamp      (System/currentTimeMillis)
-         txid           (crypto/sha3-256 cmd)
-         [network dbid] (-> cmd json/parse :db parse-db-name)
+  (let [timestamp      (System/currentTimeMillis)
+        txid           (crypto/sha3-256 cmd)
+        [network dbid] (-> cmd json/parse :db parse-db-name)
 
-         first-block    (initial-block cmd sig txid timestamp)
+        first-block    (initial-block cmd sig txid timestamp)
 
-         {:keys [block fork stats] :as new-db}
-         (-> conn
-             (new-ledger network dbid)
-             <?
-             (initialize-db first-block)
-             indexing/index
-             <?)]
+        new-ledger-ch  (new-ledger conn network dbid)
 
-     (<? (storage/write-block conn network dbid first-block))
+        initialize-ch  (async/chan 1
+                                   (map (fn [db]
+                                          (initialize-db db first-block)))
+                                   identity)]
+    (async/pipe new-ledger-ch initialize-ch)
+    (go-try
+     (let [
+           {:keys [block fork stats] :as new-db}
+           (-> initialize-ch
+               <?
+               indexing/index
+               <?)]
 
-     ;; TODO should create a new command to register new DB that first checks
-     ;;      raft
-     (<? (txproto/register-genesis-block-async group network dbid))
+       (<? (storage/write-block conn network dbid first-block))
 
-     ;; write out new index point
-     (<? (txproto/initialized-ledger-async group txid network dbid block fork (:indexed stats)))
+       ;; TODO should create a new command to register new DB that first checks
+       ;;      raft
+       (<? (txproto/register-genesis-block-async group network dbid))
 
-     new-db)))
+       ;; write out new index point
+       (<? (txproto/initialized-ledger-async group txid network dbid block fork (:indexed stats)))
+
+       new-db))))
 
 
 (defn create-network-bootstrap-command

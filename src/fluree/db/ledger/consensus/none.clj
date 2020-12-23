@@ -65,8 +65,12 @@
     (let [entry  (:entry command)
           op     (first entry)
           result (case op
-                   :new-block (let [[_ network dbid block-map _] entry
-                                    {:keys [block txns cmd-types]} block-map
+                   :new-block (let [[_ network dbid block-map _]
+                                    entry
+
+                                    {:keys [block txns cmd-types]}
+                                    block-map
+
                                     txids          (keys txns)
                                     file-key       (storage/ledger-block-key network dbid block)
                                     current-block  (get-in @state-atom [:networks network :dbs dbid :block])

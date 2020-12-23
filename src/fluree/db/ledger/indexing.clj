@@ -333,21 +333,23 @@
   Progress atom tracks progress and retains list of garbage indexes."
   ([db progress-atom idx-type]
    (index-root db progress-atom idx-type #{}))
-  ([db progress-atom idx-type remove-preds]
-   (go-try
-    (assert (contains? index/types idx-type)
-            (str "Reindex attempt on unknown index type: " idx-type))
-     (let [{:keys [conn novelty block t network dbid]} db
-           idx-novelty (get novelty idx-type)
-           idx-root    (get db idx-type)
-           dirty?      (or (dirty-idx? db idx-type)
-                           (seq remove-preds))]
-       (if-not dirty?
-         idx-root
-         (do
-           ;; add main index node key to garbage for collection
-           (add-garbage (:id idx-root) false progress-atom)
-           (<? (index-branch conn network dbid idx-root idx-novelty block t nil progress-atom remove-preds))))))))
+  ([{:keys [conn novelty block t network dbid] :as db} progress-atom idx-type remove-preds]
+   (assert (contains? index/types idx-type)
+           (str "Reindex attempt on unknown index type: " idx-type))
+   (let [idx-novelty (get novelty idx-type)
+         idx-root    (get db idx-type)
+         dirty?      (or (dirty-idx? db idx-type)
+                         (seq remove-preds))
+         out         (async/chan)]
+     (if-not dirty?
+       (async/put! out idx-root)
+       (do
+         ;; add main index node key to garbage for collection
+         (add-garbage (:id idx-root) false progress-atom)
+         (-> conn
+             (index-branch network dbid idx-root idx-novelty block t nil progress-atom remove-preds)
+             (async/pipe out))))
+     out)))
 
 ;; TODO - should track new index segments and if failure, garbage collect them
 
