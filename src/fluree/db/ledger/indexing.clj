@@ -368,11 +368,12 @@
                                :size      novelty-size
                                :completed 0})
            start-time   (Instant/now)]
-       (log/info (str "Index Update begin at: " start-time) {:network      network
-                                                             :dbid         dbid
-                                                             :t            t
-                                                             :block        block
-                                                             :novelty-size novelty-size})
+       (log/info (str "Index Update begin at: " start-time)
+                 {:network      network
+                  :dbid         dbid
+                  :t            t
+                  :block        block
+                  :novelty-size novelty-size})
        (if-not db-dirty?
          db
          (let [spot-ch    (index-root db progress :spot)    ;; indexes run in parallel
@@ -397,12 +398,13 @@
            ;; TODO - ideally issue garbage/root writes to RAFT together as a tx, currently requires waiting for both through raft sync
            (<? (storage/write-garbage indexed-db @progress))
            (<? (storage/write-db-root indexed-db ecount))
-           (log/info (str "Index Update end at: " (Instant/now)) {:network      network
-                                                                  :dbid         dbid
-                                                                  :block        block
-                                                                  :t            t
-                                                                  :idx-duration (- (.toEpochMilli (Instant/now))
-                                                                                   (.toEpochMilli start-time))})
+           (log/info (str "Index Update end at: " (Instant/now))
+                     {:network      network
+                      :dbid         dbid
+                      :block        block
+                      :t            t
+                      :idx-duration (- (.toEpochMilli (Instant/now))
+                                       (.toEpochMilli start-time))})
            indexed-db))))))
 
 

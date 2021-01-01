@@ -207,13 +207,12 @@
   [db-name private-key]
   (let [auth  (crypto/account-id-from-private private-key)
         epoch (System/currentTimeMillis)
-        cmd   (-> {:type   :new-db
-                   :db     db-name
-                   :auth   auth
-                   :doc    "Master network database."
-                   :nonce  epoch
-                   :expire (+ 300000 epoch)}
-                  (json/stringify))
+        cmd   (json/stringify {:type   :new-db
+                               :db     db-name
+                               :auth   auth
+                               :doc    "Master network database."
+                               :nonce  epoch
+                               :expire (+ 300000 epoch)})
         sig   (crypto/sign-message cmd private-key)]
     {:cmd cmd
      :sig sig}))

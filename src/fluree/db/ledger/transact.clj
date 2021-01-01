@@ -1382,7 +1382,7 @@
           block-instant (Instant/now)
           before-t      (:t db-before)]
       ;; perform each transaction in order
-      (loop [[cmd-data & r] transactions
+      (loop [[cmd-data & r]   transactions
              next-t           (dec before-t)
              db               db-before
              block-bytes      0
@@ -1391,13 +1391,14 @@
              cmd-types        #{}
              txns             {}
              remove-preds-acc #{}]
-        (let [tx-result     (<? (build-transaction session db cmd-data next-t block-instant))
-              {:keys [db-after bytes fuel flakes tempids auth authority status error hash
-                      remove-preds]} tx-result
+        (let [{:keys [db-after bytes fuel flakes tempids auth authority status
+                      error hash remove-preds]
+               cmd-type :type}
+              (<? (build-transaction session db cmd-data next-t block-instant))
+
               block-bytes*  (+ block-bytes bytes)
               block-fuel*   (+ block-fuel fuel)
               block-flakes* (into block-flakes flakes)
-              cmd-type      (:type tx-result)
               cmd-types*    (conj cmd-types cmd-type)
               txns*         (assoc txns (:id cmd-data) (util/without-nils
                                                          {:t         next-t ;; subject id
