@@ -1391,28 +1391,22 @@
              cmd-types        #{}
              txns             {}
              remove-preds-acc #{}]
-        (let [{:keys [db-after bytes fuel flakes tempids auth authority status
-                      error hash remove-preds]
-               cmd-type :type}
+        (let [{:keys [db-after bytes fuel flakes remove-preds]
+               cmd-type :type, :as txn}
               (<? (build-transaction session db cmd-data next-t block-instant))
 
               block-bytes*  (+ block-bytes bytes)
               block-fuel*   (+ block-fuel fuel)
               block-flakes* (into block-flakes flakes)
+              remove-preds* (into remove-preds-acc remove-preds)
               cmd-types*    (conj cmd-types cmd-type)
-              txns*         (assoc txns (:id cmd-data) (util/without-nils
-                                                         {:t         next-t ;; subject id
-                                                          :status    status
-                                                          :error     error
-                                                          :tempids   tempids
-                                                          :bytes     bytes
-                                                          :id        (:id cmd-data)
-                                                          :fuel      fuel
-                                                          :auth      auth
-                                                          :hash      hash
-                                                          :authority authority
-                                                          :type      cmd-type}))
-              remove-preds* (into remove-preds-acc remove-preds)]
+              txns*         (assoc txns (:id cmd-data) (-> txn
+                                                           (select-keys [:bytes :fuel :flakes :tempids :auth :authority
+                                                                         :status :error :hash :remove-preds])
+                                                           (assoc :t    next-t ;; subject id
+                                                                  :id   (:id cmd-data)
+                                                                  :type cmd-type)
+                                                           util/without-nils))]
           (if r
             (recur r (dec next-t) db-after block-bytes* block-fuel* block-flakes* cmd-types* txns*
                    remove-preds*)
