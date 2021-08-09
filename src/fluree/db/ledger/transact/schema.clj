@@ -354,7 +354,7 @@
   This represents the complete set of properties we keep in the db's :schema
   and should stay in sync with fluree.db.query.schema/schema-map."
   [{:keys [name id iri class subclassOf type multi unique index upsert component
-           noHistory retractDuplicates]
+           noHistory retractDuplicates new?]
     :or   {index             true
            unique            false
            component         false
@@ -366,7 +366,8 @@
         ref?    (= :ref type)
         upsert? (and unique (not (false? upsert)))          ;; default to upsert: true if unique and not explicitly set false
         idx?    (boolean (or ref? index unique))]
-    {:name               name
+    {:new?               new?                               ;; indicates if this predicate is newly generated, enables skipping of retraction validations downstream
+     :name               name
      :id                 id                                 ;; may be nil, will add once created
      :iri                iri
      :class              class                              ;; used only for classes
@@ -417,7 +418,8 @@
             p-data  (schema-map {:type  type
                                  :name  pred
                                  :iri   (:iri obj)
-                                 :multi (or multi? (= :ref type))})
+                                 :multi (or multi? (= :ref type))
+                                 :new?  true})
             p-data* (register-property p-data tx-state)]
         (fn [property] (get p-data* property))))))
 

@@ -47,8 +47,7 @@
         default    (get sys-collections "")]
     (fn [iri types]
       (cond
-        (and types (= "http://www.w3.org/2000/01/rdf-schema#Class" (first types)) (= 1 (count types)))
-        "_predicate"
+        (some #(= const/$rdfs:Class %) types) "_predicate"
 
         (and (nil? iri) default)
         default
@@ -208,18 +207,18 @@
 
 (defn predicate-statements
   [p-o-pairs base-smt idx {:keys [db-before] :as tx-state}]
-  (reduce-kv (fn [acc pred obj]
-               (let [idx*       (conj idx (:as obj))
-                     pred-info  (or (predicate-details pred (:collection base-smt) db-before)
-                                    (tx-schema/generate-property pred obj idx* tx-state))
-                     multi?     (pred-info :multi)
-                     statements (if multi?
-                                  (->> (if (sequential? (:val obj)) (into #{} (:val obj)) [(:val obj)])
-                                       (map-indexed (partial statement-obj base-smt pred-info tx-state idx*))
-                                       (apply concat))
-                                  (statement-obj base-smt pred-info tx-state idx* nil (:val obj)))]
-                 (into acc statements)))
-             [] p-o-pairs))
+  (reduce (fn [acc [pred obj]]
+            (let [idx*       (conj idx (:as obj))
+                  pred-info  (or (predicate-details pred (:collection base-smt) db-before)
+                                 (tx-schema/generate-property pred obj idx* tx-state))
+                  multi?     (pred-info :multi)
+                  statements (if multi?
+                               (->> (if (sequential? (:val obj)) (into #{} (:val obj)) [(:val obj)])
+                                    (map-indexed (partial statement-obj base-smt pred-info tx-state idx*))
+                                    (apply concat))
+                               (statement-obj base-smt pred-info tx-state idx* nil (:val obj)))]
+              (into acc statements)))
+          [] p-o-pairs))
 
 
 (defn generate-statement
@@ -228,7 +227,7 @@
   [{:keys [tx-context] :as tx-state} txi idx parent-ctx]
   (let [ctx             (local-context txi (or parent-ctx tx-context))
         txi*            (normalize-txi txi ctx)             ;; normalize the txi with the provided context
-        p-o-pairs       (not-empty (dissoc txi* "@id" "@context" "@action" "@type"))
+        p-o-pairs       (not-empty (filter #(not (system-predicate? (key %))) txi*))
         base-smt        (base-statement tx-state ctx txi* nil)
         blank?          (and (nil? p-o-pairs)
                              (nil? (:types base-smt)))

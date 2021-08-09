@@ -299,11 +299,12 @@
             o*            (if o-tempid? (get-in @tempids [o :sid]) o) ;; object may be a tempid, if so resolve to permanent id
             new-flake     (flake/->Flake s p o* t true nil)
             ;; retractions do not need to be checked for tempids (except when tempid resolved via an :upsert true)
-            retract-flake (when (or (not tempid?) (contains? @upserts s))
+            retract-flake (when (and (or (not tempid?) (contains? @upserts s))
+                                     (not (pred-info :new?)))
+                            ;; if :new?, no need to check retractions as predicate never existed.
                             (first (<? (tx-retract/flake s p (when (pred-info :multi) o*) tx-state)))) ;; for multi-cardinality, only retract exact matches
             flakes        (add-singleton-flake new-flake retract-flake pred-info)]
-
-        (when (not-empty flakes)
+        (when (and (not-empty flakes) (not (pred-info :new?)))
           (tx-validate/check-collection-specs collection tx-state flakes)
           (when (pred-info :spec)
             (tx-validate/queue-pred-spec new-flake pred-info tx-state))
