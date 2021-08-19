@@ -13,8 +13,7 @@
             [fluree.db.permissions-validate :as perm-validate]
             [fluree.db.flake :as flake]
             [fluree.db.api :as fdb]
-            [fluree.db.ledger.transact.tempid :as tempid]
-            [fluree.db.dbfunctions.js :as js])
+            [fluree.db.ledger.transact.tempid :as tempid])
   (:import (fluree.db.flake Flake)))
 
 ;;; functions to validate transactions
@@ -78,9 +77,7 @@
                            (async/into [])
                            (<?)
                            (map #(if (util/exception? %) (throw %) (.-o ^Flake (first %)))))
-            fn-parsed (if (= :lisp language)
-                        (<? (dbfunctions/parse-fn db (dbfunctions/combine-fns fn-code) fn-type nil))
-                        (map (comp eval :fn js/parse) fn-code))]
+            fn-parsed (<? (dbfunctions/parse-fn db (dbfunctions/combine-fns fn-code) fn-type nil))]
         (deliver promise {:language language
                           :f        fn-parsed}))
       (catch Exception e (deliver promise e)))))
