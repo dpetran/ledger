@@ -1,5 +1,6 @@
 {:deps {org.clojure/clojure {:mvn/version "1.10.3"}
         org.clojure/data.xml {:mvn/version "0.2.0-alpha6"}
+        com.fluree/alphabase {:mvn/version "3.2.1"}
         com.fluree/db {:local/root "../db"}
         com.fluree/raft {:mvn/version "1.0.0-beta1"}
         com.fluree/crypto {:mvn/version "0.3.5"}
@@ -11,24 +12,25 @@
         clucie/clucie {:mvn/version "0.4.2"}
 
         ;; AWS S3 API
-        com.cognitect.aws/api {:mvn/version "0.8.505"}
-        com.cognitect.aws/endpoints {:mvn/version "1.1.11.960"}
-        com.cognitect.aws/s3 {:mvn/version "810.2.817.0"}
+        com.cognitect.aws/api {:mvn/version "0.8.515"}
+        com.cognitect.aws/endpoints {:mvn/version "1.1.12.13"}
+        com.cognitect.aws/s3 {:mvn/version "811.2.934.0"}
 
         ;; web server
+        aleph/aleph {:mvn/version "0.4.7-alpha7"}
         aleph-middleware/aleph-middleware {:mvn/version "0.2.0"}
-        ring/ring-core {:mvn/version "1.9.1"}
+        ring/ring-core {:mvn/version "1.9.4"}
         ring-cors/ring-cors {:mvn/version "0.1.13"}
         compojure/compojure {:mvn/version "1.6.2"}
 
         ;; logging
-        ch.qos.logback/logback-classic {:mvn/version "1.2.3"}}
+        ch.qos.logback/logback-classic {:mvn/version "1.2.5"}}
 
  :paths ["src" "resources"]
  :aliases
  {:mvn/group-id com.fluree
   :mvn/artifact-id ledger
-  :mvn/version "1.0.0-beta11"
+  :mvn/version "1.0.0-beta13"
 
   :dev
   {:extra-paths ["dev"]
@@ -37,14 +39,17 @@
                "-e" "(in-ns,'user)"]}
 
   :test
-  {:extra-paths ["test"]
+  {:extra-paths ["test"]}
+
+  :runner
+  {:extra-paths ["test-resources"]
    :extra-deps {com.cognitect/test-runner
                 {:git/url "https://github.com/cognitect-labs/test-runner.git"
-                 :sha "b6b3193fcc42659d7e46ecd1884a228993441182"}}
+                 :sha "4e7e1c0dfd5291fa2134df052443dc29695d8cbe"}}
    :main-opts ["-m" "cognitect.test-runner"]}
 
   :jar
-  {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.0.206"}}
+  {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.1.267"}}
    :exec-fn hf.depstar/jar
    :exec-args {:jar "target/fluree-ledger.jar"
                :group-id :mvn/group-id
@@ -53,7 +58,7 @@
                :sync-pom true}}
 
   :uberjar
-  {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.0.206"}}
+  {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.1.267"}}
    :exec-fn hf.depstar/uberjar
    :exec-args {:jar "target/fluree-ledger.standalone.jar"
                :aot true
@@ -64,4 +69,21 @@
                :sync-pom true}}
 
   :meta
-  {:main-opts ["-m" "fluree.db.meta"]}}}
+  {:main-opts ["-m" "fluree.db.meta"]}
+
+  :coverage
+  {:extra-paths ["test"]
+   :extra-deps  {cloverage/cloverage {:mvn/version "1.2.2"}}
+   :main-opts   ["-m" "cloverage.coverage" "-p" "src" "-s" "test" "--test-ns-regex" "^fluree\\.db\\.ledger\\.ledger-test*$" "--output" "scanning_results/coverage"]}
+
+  :eastwood
+  {:extra-deps {jonase/eastwood {:mvn/version "RELEASE"}}
+   :main-opts ["-m" "eastwood.lint" {:source-paths ["src"] :out "scanning_results/eastwood.out"}]}
+
+  :ancient
+  {:extra-deps {com.github.liquidz/antq {:mvn/version "RELEASE"}}
+   :main-opts ["-m" "antq.core" "--skip=github-action"]}
+
+  :clj-kondo
+  {:extra-deps {clj-kondo/clj-kondo {:mvn/version "2021.07.28"}}
+   :main-opts ["-m" "clj-kondo.main" "--lint" "src" "--config" ".clj-kondo/config.edn"]}}}

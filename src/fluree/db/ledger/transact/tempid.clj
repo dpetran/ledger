@@ -20,7 +20,7 @@
 
 (defn register
   "Registers a TempId instance into the tx-state, returns provided TempId unaltered."
-  [TempId idx {:keys [tempids] :as tx-state}]
+  [TempId idx {:keys [tempids]}]
   {:pre [(TempId? TempId)]}
   (swap! tempids update TempId (fnil
                                  #(update % :idx (fn [i] (if (neg-int? (compare i idx)) i idx))) ;; take smallest/first idx
@@ -66,7 +66,7 @@
   "Returns a tempid that will be used for a Flake object value, but only returns it if
   it already exists. If it does not exist, it means it is a tempid used as a value, but it was never used
   as a subject."
-  [tempid idx {:keys [tempids] :as tx-state}]
+  [tempid idx {:keys [tempids]}]
   (let [TempId (construct* tempid idx nil)]
     (if (contains? @tempids TempId)
       TempId
@@ -78,7 +78,7 @@
 (defn set
   "Sets a tempid value into the cache. If the tempid was already set by another :upsert
   predicate that matched a different subject, throws an error. Returns set subject-id on success."
-  [tempid subject-id {:keys [tempids] :as tx-state}]
+  [tempid subject-id {:keys [tempids]}]
   (swap! tempids update tempid
          (fn [{:keys [sid] :as tempid-map}]
            (cond
@@ -100,7 +100,7 @@
 
 (defn result-map
   "Creates a map of original user tempid strings to the resolved value."
-  [{:keys [tempids] :as tx-state}]
+  [{:keys [tempids]}]
   (reduce-kv (fn [acc ^TempId tempid {:keys [sid user-string] :as tempid-map}]
                (if (:unique? tempid)
                  (assoc acc user-string sid)

@@ -1,6 +1,5 @@
 (ns fluree.db.server-settings
   (:require [clojure.string :as str]
-            [environ.core :as environ]
             [clojure.java.io :as io]
             [clojure.tools.logging :as log]
             [fluree.db.util.core :as util]
@@ -26,6 +25,7 @@
    :fdb-license-key              nil
    :fdb-consensus-type           "raft"                     ;; raft
    :fdb-encryption-secret        nil                        ;; Text encryption secret for encrypting data at rest and in transit
+   :fdb-json-bigdec-string       true                       ;; encode BigDecimal numbers as a string for json.stringify
 
    :fdb-group-config-path        "./"
    :fdb-group-private-key        nil
@@ -91,19 +91,6 @@
 
    ;; api settings
    :fdb-api-open               true})
-
-
-;; FDB_SETTINGS: dbaas
-(def env-dbaas-settings
-  {:fdb-storage-type           "file"
-   :fdb-memory-cache           "2gb"
-   :fdb-memory-reindex         "1mb"
-   :fdb-memory-reindex-max     "5mb"
-   :fdb-stats-report-frequency "1m"
-   :fdb-debug-mode             false
-
-   ;; api options
-   :fdb-api-port               8090})
 
 
 (defn- read-properties-file
@@ -271,11 +258,6 @@
         (double)
         (Math/round))))
 
-
-(defn env-servers
-  "Takes a comma separated list of servers and returns a vector of server strings"
-  [s]
-  (str/split s #","))
 
 
 (defn- env-storage-type
@@ -536,17 +518,12 @@
                                    (throw (ex-info (format "TX group heartbeat milliseconds: %s cannot be greater than timeout milliseconds: %s." timeout-ms heartbeat-ms)
                                                    {:status 400
                                                     :error  :db/invalid-configuration})))
-        private-keys             (cond-> []
-                                         (:fdb-group-private-key settings)
-                                         (into (str/split (:fdb-group-private-key settings) #","))
-
-                                         :else
-                                         (into (->> (get-or-generate-tx-private-key settings)
-                                                    (str/split-lines)
-                                                    (filter not-empty)
-                                                    (reduce #(if (str/includes? %2 ",")
-                                                               (into %1 (str/split %2 #","))
-                                                               (conj %1 %2)) []))))
+        private-keys             (into [] (->> (get-or-generate-tx-private-key settings)
+                                               (str/split-lines)
+                                               (filter not-empty)
+                                               (reduce #(if (str/includes? %2 ",")
+                                                          (into %1 (str/split %2 #","))
+                                                          (conj %1 %2)) [])))
         encryption-key           (encryption-secret->key settings)
         storage-type             (env-storage-type settings)
         s3-conn                  (some-> settings :fdb-storage-s3-bucket s3store/connect)
@@ -690,6 +667,8 @@
                    :enabled     webserver?
                    :debug-mode? debug-mode?
                    :open-api    (-> settings :fdb-api-open env-boolean)
+                   :json-bigdec-string
+                                (-> settings :fdb-json-bigdec-string env-boolean)
                    :meta        {:hostname hostname}}
      ;:version  fdb-version
 
@@ -702,8 +681,8 @@
 
 (comment
 
-
-  environ/env
+  (require '[environ.core :as environ])
+  environ.core/env
 
   (->
     (build-env environ/env)))

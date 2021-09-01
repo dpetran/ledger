@@ -12,7 +12,6 @@
             [fluree.db.ledger.transact.retract :as tx-retract]
             [fluree.db.ledger.transact.tempid :as tempid]
             [fluree.db.ledger.transact.tags :as tags]
-            [fluree.db.ledger.transact.txfunction :as txfunction]
             [fluree.db.ledger.transact.auth :as tx-auth]
             [fluree.db.ledger.transact.tx-meta :as tx-meta]
             [fluree.db.ledger.transact.validation :as tx-validate]
@@ -135,30 +134,27 @@
   [tx-state {:keys [pred-info id o iri idx context] :as smt}]
   (go-try
     (let [type (pred-info :type)
-          o*   (if (txfunction/tx-fn? o)                    ;; should only happen for multi-cardinality objects
-                 (<? (txfunction/execute o id pred-info tx-state))
-                 o)
-          o**  (cond
-                 (nil? o*) nil
+          o*   (cond
+                 (nil? o) nil
 
                  (= :ref type) (cond
-                                 (tempid/TempId? o*) o*     ;; tempid, don't need to resolve yet
-                                 (string? o*) (if (json-ld? tx-state)
-                                                (<? (identity/resolve-iri o* nil context idx tx-state)) ;; since this is JSON-ld, any ref should be an iri as well.
-                                                (tempid/use o* idx tx-state))
-                                 (int? o*) (if (= const/$rdf:type (pred-info :id))
-                                             o*
-                                             (<? (identity/resolve-ident-strict o* tx-state)))
-                                 (util/pred-ident? o*) (<? (identity/resolve-ident-strict o* tx-state)))
+                                 (tempid/TempId? o) o       ;; tempid, don't need to resolve yet
+                                 (string? o) (if (json-ld? tx-state)
+                                               (<? (identity/resolve-iri o nil context idx tx-state)) ;; since this is JSON-ld, any ref should be an iri as well.
+                                               (tempid/use o idx tx-state))
+                                 (int? o) (if (= const/$rdf:type (pred-info :id))
+                                            o
+                                            (<? (identity/resolve-ident-strict o tx-state)))
+                                 (util/pred-ident? o) (<? (identity/resolve-ident-strict o tx-state)))
 
-                 (= :tag type) (<? (tags/resolve o* idx pred-info tx-state))
+                 (= :tag type) (<? (tags/resolve o idx pred-info tx-state))
 
-                 :else (conform-object-value o* type))]
-      (when (and (pred-info :unique) (not (nil? o**)))
-        (<? (resolve-unique o** id pred-info tx-state)))
-      (cond-> (assoc smt :o o**)
-              (nil? o**) (assoc :action :retract)
-              (tempid/TempId? o**) (assoc :o-tempid? true)))))
+                 :else (conform-object-value o type))]
+      (when (and (pred-info :unique) (not (nil? o*)))
+        (<? (resolve-unique o* id pred-info tx-state)))
+      (cond-> (assoc smt :o o*)
+              (nil? o*) (assoc :action :retract)
+              (tempid/TempId? o*) (assoc :o-tempid? true)))))
 
 
 (defn add-singleton-flake
@@ -286,31 +282,28 @@
   [{:keys [tempids upserts t] :as tx-state}
    {:keys [id action pred-info p o o-tempid? tempid? collection] :as statement}]
   (go-try
-    (cond
-      (= :retract-subject action)
-      (<? (tx-retract/subject id tx-state))
-
-      (= :retract action)
-      (<? (tx-retract/flake id p o tx-state))
-
-      ;; (= :add action) below
-      :else
-      (let [s             (if tempid? (get-in @tempids [id :sid]) id)
-            o*            (if o-tempid? (get-in @tempids [o :sid]) o) ;; object may be a tempid, if so resolve to permanent id
-            new-flake     (flake/->Flake s p o* t true nil)
-            ;; retractions do not need to be checked for tempids (except when tempid resolved via an :upsert true)
-            retract-flake (when (and (or (not tempid?) (contains? @upserts s))
-                                     (not (pred-info :new?)))
-                            ;; if :new?, no need to check retractions as predicate never existed.
-                            (first (<? (tx-retract/flake s p (when (pred-info :multi) o*) tx-state)))) ;; for multi-cardinality, only retract exact matches
-            flakes        (add-singleton-flake new-flake retract-flake pred-info)]
-        (when (and (not-empty flakes) (not (pred-info :new?)))
+    (if (= :retract-subject action)
+      (let [flakes (<? (tx-retract/subject id tx-state))]
+        (tx-validate/check-collection-specs collection tx-state flakes)
+        flakes)
+      (let [flakes (if (= :retract action)
+                     (<? (tx-retract/flake id p o tx-state))
+                     (let [s             (if tempid? (get-in @tempids [id :sid]) id)
+                           o*            (if o-tempid? (get-in @tempids [o :sid]) o) ;; object may be a tempid, if so resolve to permanent id
+                           new-flake     (flake/->Flake s p o* t true nil)
+                           ;; retractions do not need to be checked for tempids (except when tempid resolved via an :upsert true)
+                           retract-flake (when (and (or (not tempid?) (contains? @upserts s))
+                                                    (not (pred-info :new?)))
+                                           ;; if :new?, no need to check retractions as predicate never existed.
+                                           (first (<? (tx-retract/flake s p (when (pred-info :multi) o*) tx-state)))) ;; for multi-cardinality, only retract exact matches
+                           flakes*       (add-singleton-flake new-flake retract-flake pred-info)]
+                       (when (and (pred-info :spec) (seq flakes*))
+                         (tx-validate/queue-pred-spec new-flake pred-info tx-state))
+                       flakes*))]
+        (when (and (seq flakes) (not (pred-info :new?)))
           (tx-validate/check-collection-specs collection tx-state flakes)
-          (when (pred-info :spec)
-            (tx-validate/queue-pred-spec new-flake pred-info tx-state))
           (when (pred-info :txSpec)
             (tx-validate/queue-predicate-tx-spec flakes pred-info tx-state)))
-
         flakes))))
 
 
@@ -330,10 +323,10 @@
   [tx-state]
   (fn [statement res-ch]
     (async/go
-      (->> (finalize-flakes tx-state statement)
-           async/<!
-           (async/put! res-ch))
-      (async/close! res-ch))))
+      (let [res (async/<! (finalize-flakes tx-state statement))]
+        (when res
+          (async/put! res-ch res))
+        (async/close! res-ch)))))
 
 
 (defmulti generate-statements (fn [tx-state _] (:format tx-state)))
@@ -434,7 +427,7 @@
   [db cmd-data t block-instant]
   (async/go
     (try
-      (let [tx-map   (try (tx-util/validate-command (:command cmd-data))
+      (let [tx-map   (try (tx-util/validate-command cmd-data)
                           (catch Exception e
                             (log/error e "Unexpected error parsing command: " (pr-str cmd-data))
                             (throw (ex-info "Unexpected error parsing command."

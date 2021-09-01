@@ -1,21 +1,22 @@
 (ns fluree.db.ledger.consensus.raft
   (:require [fluree.raft :as raft]
-            [clojure.java.io :as io]
             [taoensso.nippy :as nippy]
             [clojure.core.async :as async :refer [<! <!!]]
+            [clojure.pprint :as cprint]
             [clojure.tools.logging :as log]
             [clojure.string :as str]
             [fluree.db.storage.core :as storage]
             [fluree.db.serde.avro :as avro]
             [fluree.db.event-bus :as event-bus]
             [fluree.db.ledger.consensus.tcp :as ftcp]
-            [fluree.db.util.async :refer [go-try <??]]
+            [fluree.db.util.async :refer [go-try <? <??]]
             [fluree.db.ledger.txgroup.txgroup-proto :as txproto :refer [TxGroup]]
             [fluree.db.ledger.consensus.update-state :as update-state]
             [fluree.db.ledger.txgroup.monitor :as group-monitor]
             [fluree.db.ledger.consensus.dbsync2 :as dbsync2]
             [fluree.crypto :as crypto]
-            [fluree.raft.log :as raft-log])
+            [fluree.db.ledger.storage :as ledger-storage]
+            [fluree.db.constants :as const])
   (:import (java.util UUID)))
 
 
@@ -32,10 +33,8 @@
   If multiple parts are returned, additional requests for each part will be
   requested. A snapshot should be broken into multiple parts if it is larger than
   the amount of data you want to push across the network at once."
-  [{:keys [path storage-read] :as config}]
-  (fn [id part]
-    ;; TODO: Actually use the part arg or get rid of it - WSM 2020-09-01
-    ;; in this example we do everything in one part, regardless of snapshot size
+  [{:keys [path storage-read]}]
+  (fn [id _]
     (let [file (str path id ".snapshot")
           ba   (<!! (storage-read file))]
       {:parts 1
@@ -49,10 +48,10 @@
   If snapshot-part = 1, should first delete any existing file if it exists (possible to have historic partial snapshot lingering).
 
   As soon as final part write succeeds, can safely garbage collect any old snapshots on disk except the most recent one."
-  [{:keys [path storage-delete storage-write] :as config}]
+  [{:keys [path storage-delete storage-write]}]
   (fn [snapshot-map]
-    (let [{:keys [leader-id snapshot-term snapshot-index snapshot-part snapshot-parts snapshot-data]} snapshot-map
-          file (str snapshot-index ".snapshot")]
+    (let [{:keys [snapshot-index snapshot-part snapshot-data]} snapshot-map
+          file (str path snapshot-index ".snapshot")]
 
       ;; NOTE: Currently snapshot-part is always 1 b/c we never send multi-part snapshots.
       ;;   See comment in `snapshot-xfer` for more details. - WSM 2020-09-01
@@ -74,7 +73,7 @@
 
   Called with snapshot-id to reify, which corresponds to the commit index the snapshot was taken.
   Should throw if snapshot not found, or unable to parse. This will stop raft."
-  [{:keys [path state-atom storage-read] :as config}]
+  [{:keys [path state-atom storage-read]}]
   (fn [snapshot-id]
     (try
       (let [file  (str path snapshot-id ".snapshot")
@@ -95,7 +94,7 @@
 
 
 (defn- purge-snapshots
-  [{:keys [path storage-list storage-delete max-snapshots] :as config}]
+  [{:keys [path storage-list storage-delete max-snapshots]}]
   (let [rm-snapshots (some->> (storage-list path)
                               <!!
                               (keep return-snapshot-id)
@@ -113,12 +112,6 @@
   "Returns current raft state to callback."
   [raft callback]
   (raft/get-raft-state (:raft raft) callback))
-
-
-(defn view-raft-state
-  "Pretty prints current raft state."
-  [raft]
-  (get-raft-state raft (fn [x] (clojure.pprint/pprint (dissoc x :config)))))
 
 
 (defn leader-async
@@ -199,7 +192,7 @@
 (defn snapshot-list-indexes
   "Lists all stored snapshot indexes, sorted ascending. Used for bootstrapping a
   raft network from a previously made snapshot."
-  [{:keys [path storage-list] :as config}]
+  [{:keys [path storage-list]}]
   (log/debug "Initialized snapshot-list-indexes with path" path "and storage-list" storage-list)
   (fn []
     (log/debug "Listing snapshot indexes in" path)
@@ -236,8 +229,8 @@
 
 
 (defn state-machine
-  [server-id state-atom storage-read storage-write]
-  (fn [command raft-state]
+  [_ state-atom storage-read storage-write]
+  (fn [command _]
     (let [op     (first command)
           result (case op
 
@@ -305,7 +298,7 @@
 
                    :new-index (update-state/new-index command state-atom)
 
-                   :lowercase-all-names (update-state/lowercase-all-names command state-atom)
+                   :lowercase-all-names (update-state/lowercase-all-names state-atom)
 
                    :assoc-in (update-state/assoc-in* command state-atom)
 
@@ -542,7 +535,7 @@
 
 (defn monitor-raft
   "Monitor raft events and state for debugging"
-  ([raft] (monitor-raft raft (fn [x] (clojure.pprint/pprint x))))
+  ([raft] (monitor-raft raft (fn [x] (cprint/pprint x))))
   ([raft callback]
    (raft/monitor-raft (:raft raft) callback)))
 
@@ -652,24 +645,10 @@
     (new-entry-async raft command)))
 
 
-(defn acquire-lease
-  [raft ks id expire-ms]
-  (<!! (acquire-lease-async raft ks id expire-ms)))
-
-
 (defn release-lease-async
   [raft ks id]
   (let [command [:lease-release ks id]]
     (new-entry-async raft command)))
-
-
-(defn lessor
-  "Returns id of lease holder at specified key-seq if a lease exists and not expired, else nil."
-  [raft ks]
-  (let [lease (txproto/kv-get-in raft ks)]
-    (if (or (nil? lease) (< (:expire lease) (System/currentTimeMillis)))
-      nil
-      (:id lease))))
 
 
 (defn server-active?
@@ -731,8 +710,39 @@
     (acquire-lease-async raft [:leases :servers this-server] this-server expire-ms)))
 
 
+(defn check-if-newer-blocks-on-disk
+  "In the case of startup as a leader, but possibly old raft state, we check to see
+  if there are newer blocks on disk that were added after the raft state we started with.
+
+  If so, it will broadcast those blocks out."
+  [{:keys [group] :as conn}]
+  (go-try
+    (let [current-state @(:state-atom group)]
+      (when-let [ledgers (not-empty (txproto/ledger-list* current-state))]
+        (doseq [[network dbid] ledgers]
+          (let [latest-block (txproto/block-height* current-state network dbid)]
+
+            (log/debug "Raft startup - latest block: " [network dbid] latest-block)
+            (loop [next-block (inc latest-block)]
+              (when (<? (ledger-storage/block-exists? conn network dbid next-block))
+                (let [block-data  (<? (storage/read-block conn network dbid next-block))
+                      ;; incoming raft event expects a map of txns in block, with txid being keys. and :cmd-types
+                      ;; would error in raft if these are not included, recreate from block data
+                      block-data* (assoc block-data :cmd-types #{:tx}
+                                                    :txns (->> (:flakes block-data)
+                                                               (keep #(when (= const/$_tx:id (.-p %))
+                                                                        [(.-o %) nil]))
+                                                               (into {})))]
+
+                  (log/info (str "Ledger " network "/" dbid
+                                 " has block file(s) beyond raft known block height of "
+                                 latest-block ". Found block: " next-block))
+                  (<? (txproto/propose-new-block-async group network dbid block-data*)))
+                (recur (inc next-block))))))))))
+
+
 (defn raft-start-up
-  [group conn system* shutdown join?]
+  [group conn system* shutdown _]
   (async/go
     (try (let [fully-committed? (async/<! (index-fully-committed? group true))]
            (when (instance? Throwable fully-committed?)
@@ -748,7 +758,7 @@
                  current-state  @(:state-atom group-raft)
                  ledgers-info   (txproto/all-ledger-block current-state)]
              (when-not (nil? storage-path)                  ; TODO: Support full-text indexes on s3 storage too
-               (async/<! (dbsync2/check-full-text-synced conn storage-path ledgers-info)))
+               (async/<! (dbsync2/check-full-text-synced conn ledgers-info)))
              (if (instance? Exception sync-finished?)
                (dbsync2/terminate! conn
                                    "Terminating due to file syncing error, unable to sync required files with other servers."
@@ -760,12 +770,18 @@
 
 
            (when (async/<! (is-leader?-async group))
-             (when (empty? (txproto/get-shared-private-key group))
-               (log/info "Brand new Fluree instance, establishing default shared private key.")
-               ;; TODO - check environment to see if a private key was supplied
-               (let [private-key (or (:tx-private-key conn)
-                                     (:private (crypto/generate-key-pair)))]
-                 (txproto/set-shared-private-key (:group conn) private-key))))
+             (let [new-instance? (empty? (txproto/get-shared-private-key group))]
+               (if new-instance?
+                 (do
+                   (log/info "Brand new Fluree instance, establishing default shared private key.")
+                   ;; TODO - check environment to see if a private key was supplied
+                   (let [private-key (or (:tx-private-key conn)
+                                         (:private (crypto/generate-key-pair)))]
+                     (txproto/set-shared-private-key (:group conn) private-key)))
+                 ;; not a new instance, but just started as leader - could have old
+                 ;; raft files that don't have latest blocks. Check, and potentially add latest block
+                 ;; files to network.
+                 (<? (check-if-newer-blocks-on-disk conn)))))
 
 
            ;; monitor state changes to kick of transactions for any queues
@@ -879,13 +895,13 @@
     (if join?
       ;; If joining an existing network, connects to all other servers
       (let [connect-servers (filter #(not= this-server (:server-id %)) server-configs)
-            handler-fn      (partial message-consume (:raft raft-instance) (:storage-read raft-configs))]
+            handler-fn      (partial message-consume (:raft raft-instance) (:storage-ledger-read raft-configs))]
         (doseq [connect-to connect-servers]
           (ftcp/launch-client-connection this-server-cfg connect-to handler-fn)))
 
       ;; simple rule (for now) is we connect to servers whose id is > (lexical sort) than our own
       (let [connect-servers (filter #(> 0 (compare this-server (:server-id %))) server-configs)
-            handler-fn      (partial message-consume (:raft raft-instance) (:storage-read raft-configs))]
+            handler-fn      (partial message-consume (:raft raft-instance) (:storage-ledger-read raft-configs))]
         (doseq [connect-to connect-servers]
           (ftcp/launch-client-connection this-server-cfg connect-to handler-fn))))
 

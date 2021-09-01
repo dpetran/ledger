@@ -18,19 +18,33 @@
   (str (bucket->url bucket) k))
 
 
+(defn strip-path-prefix
+  "Strip path prefix from key"
+  [path key]
+  (if (str/starts-with? key path)
+    (-> key (str/replace-first path "") (str/replace #"^/" ""))
+    key))
+
+
 (defn read
   "Returns a byte array of the data under key `k` (converted to a UNIX-style
-  path with key->unix-path) of this store's S3 bucket."
+  path with key->unix-path) of this store's S3 bucket. Returns an exception if
+  an error occurs."
   [{:keys [client bucket]} base-path k]
   (with-open [out (ByteArrayOutputStream.)]
     (let [s3-key (key->unix-path base-path k)
-          {in :Body} (aws/invoke client {:op      :GetObject
-                                         :request {:Bucket bucket, :Key s3-key}})]
+          resp (aws/invoke client {:op      :GetObject
+                                   :request {:Bucket bucket, :Key s3-key}})]
       (log/debug "Reading" s3-key "in bucket" bucket)
-      (when in
-        (io/copy in out)
-        (.close in)
-        (.toByteArray out)))))
+      (if (:cognitect.anomalies/category resp)
+        (if (:cognitect.aws.client/throwable resp)
+          resp
+          (ex-info "S3 read failed" {:response resp}))
+        (let [{in :Body} resp]
+          (when in
+            (io/copy in out)
+            (.close in)
+            (.toByteArray out)))))))
 
 
 (defn connection-storage-read
@@ -82,26 +96,37 @@
          (write conn base-path key data))))))
 
 
+(defn- s3-list
+  [{:keys [client bucket]} path]
+  (let [base-req {:op      :ListObjectsV2
+                  :request {:Bucket bucket}}
+        req (if (= path "/")
+              base-req
+              (assoc-in base-req [:request :Prefix] path))
+        resp (aws/invoke client req)]
+    (if (:cognitect.anomalies/category resp)
+      (if (:cognitect.aws.client/throwable resp)
+        resp
+        (ex-info "S3 list failed" {:response resp}))
+      (:Contents resp))))
+
+
 (defn list
   "Returns a sequence of data maps with keys `#{:name :size :url}` representing
   the files in this store's S3 bucket."
-  [{:keys [client bucket] :as conn} & [path]]
-  (log/debug "Listing files in bucket" bucket "at" (or path "/"))
-  (let [req        {:op      :ListObjectsV2
-                    :request {:Bucket bucket}}
-        req        (if path
-                     (assoc-in req [:request :Prefix] path)
-                     req)
-        resp       (aws/invoke client req)
-        _          (if (:cognitect.anomalies/category resp)
-                     (if-let [err (:cognitect.aws.client/throwable resp)]
-                       err
-                       (ex-info "S3 list failed" {:response resp})))
-        objects    (:Contents resp)
-        bucket-url (partial key->url conn)]
-    (map (fn [{key :Key, size :Size}]
-           {:name key, :url (bucket-url key), :size size})
-         objects)))
+  [{:keys [bucket] :as conn} & [path]]
+  (let [path' (or path "/")]
+    (log/debug "Listing files in bucket" bucket "at" path')
+    (let [objects (s3-list conn path')
+          bucket-url (partial key->url conn)
+          result (map (fn [{key :Key, size :Size}]
+                        {:name (strip-path-prefix path' key)
+                         :url  (bucket-url key)
+                         :size size})
+                      objects)]
+      (log/debug (format "Objects found in %s bucket at %s: %s"
+                           bucket path' (pr-str result)))
+      result)))
 
 
 (defn connection-storage-list
@@ -120,8 +145,8 @@
   (let [s3-key (key->unix-path base-path k)]
     (log/debug "Checking for existence of" s3-key "in bucket" (:bucket conn))
     (->> base-path
-         (list conn)
-         (map :name)
+         (s3-list conn)
+         (map :Key)
          (some #{s3-key})
          boolean)))
 

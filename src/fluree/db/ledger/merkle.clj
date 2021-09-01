@@ -1,6 +1,5 @@
 (ns fluree.db.ledger.merkle
-  (:require [fluree.crypto :as crypto]
-            [fluree.db.util.log :as log]))
+  (:require [fluree.crypto :as crypto]))
 
 (defn exp [x n]
   (loop [acc 1 n n]
@@ -23,16 +22,5 @@
       (if r
         (recur r acc*)
         acc*))))
-
-(defn generate-merkle-root
-  "hashes should already be in the correct order."
-  [& hashes]
-  (let [count-cmds   (count hashes)
-        repeat-last  (- count-cmds (find-closest-power-2 count-cmds))
-        leaves-ordrd (concat hashes (repeat repeat-last (last hashes)))]
-    (loop [merkle-results (apply generate-hashes leaves-ordrd)]
-      (if (> 1 (count merkle-results))
-        (recur (apply generate-hashes merkle-results))
-        (first merkle-results)))))
 
 

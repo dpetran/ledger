@@ -25,7 +25,6 @@
             [fluree.db.token-auth :as token-auth]
             [fluree.db.peer.websocket :as websocket]
             [ring.util.response :as resp]
-            [clojure.string :as str]
             [fluree.db.util.async :refer [<?? <? go-try]]
             [fluree.db.ledger.txgroup.txgroup-proto :as txproto]
             [fluree.db.serde.protocol :as serdeproto]
@@ -36,6 +35,7 @@
             [fluree.db.auth :as auth]
             [fluree.db.ledger.delete :as delete]
             [fluree.db.meta :as meta]
+            [fluree.db.storage.core :as storage-core]
             [fluree.db.ledger.transact.core :as tx-core]
             [fluree.db.ledger.transact.json-ld :as tx-json-ld])
   (:import (java.io Closeable)
@@ -110,13 +110,6 @@
   {:status  404
    :headers {"Content-Type" "text/plain"}
    :body    "Not found"})
-
-
-(defn- json-response
-  [status body & [headers]]
-  {:status  status
-   :headers (merge {"Content-Type" "application/json; charset=utf-8"} headers)
-   :body    (json/stringify-UTF8 body)})
 
 
 (defn decode-body
@@ -269,14 +262,18 @@
 
 
 (defmethod action-handler :command
-  [_ system param _ _ _]
+  [_ system param _ ledger timeout]
   (go-try
     (let [_      (when-not (and (map? param) (:cmd param))
                    (throw (ex-info (str "Api endpoint for 'command' must contain a map/object with cmd keys.")
                                    {:status 400 :error :db/invalid-command})))
           conn   (:conn system)
           result (cond (and (:cmd param) (:sig param))
-                       (<? (fdb/submit-command-async conn param))
+                       (let [persist-resp (<? (fdb/submit-command-async conn param))
+                             result       (if (and (string? persist-resp) (-> param :txid-only false?))
+                                            (<? (fdb/monitor-tx-async conn ledger persist-resp timeout))
+                                            persist-resp)]
+                         result)
 
                        (not (open-api? system))
                        (throw (ex-info (str "Api endpoint for 'command' must contain a map/object with cmd and sig keys when using a closed Api.")
@@ -341,7 +338,7 @@
               res           (<? (tx-core/transact db {:command cmd-data} next-t block-instant))
               {:keys [flakes fuel status error db-after]} res
               fuel-tot      (+ fuel-tot fuel)
-              _             (if (not= status 200)
+              _             (when (not= status 200)
                               (throw (ex-info error
                                               {:status status
                                                :error  error
@@ -368,7 +365,7 @@
 
 
 (defmethod action-handler :ledger-stats
-  [_ system _ auth-map ledger _]
+  [_ system _ _ ledger _]
   (go-try
     (let [conn    (:conn system)
           session (session/session conn ledger)
@@ -396,7 +393,7 @@
   (go-try
     (let [conn           (:conn system)
           indexer        (-> conn :full-text/indexer :process)
-          [network dbid] (graphdb/validate-ledger-ident ledger)
+          _              (graphdb/validate-ledger-ident ledger) ;validates, throws if not valid
           db             (<? (fdb/db conn ledger))
           reindex-status (<? (indexer {:action :reset, :db db}))]
       [{:status 200} reindex-status])))
@@ -490,7 +487,7 @@
               auth-map        (auth-map system ledger request action-param)
               request-timeout (if-let [timeout (:request-timeout headers)]
                                 (try (Integer/parseInt timeout)
-                                     (catch Exception e 60000))
+                                     (catch Exception _ 60000))
                                 60000)
               [header body] (<? (action-handler action* system action-param auth-map ledger request-timeout))
               request-time    (- (System/nanoTime) start)
@@ -521,7 +518,7 @@
   - user     - _user/username (TODO: should allow any _user ident in the future)
   - auth     - _auth/id (TODO: should allow any _auth ident in the future)
   - expire   - requested time to expire in milliseconds"
-  [system ledger {:keys [body] :as request}]
+  [system ledger {:keys [body]}]
   (let [deferred (d/deferred)]
     (async/go
       (try
@@ -549,7 +546,7 @@
 
 ;; TODO - ensure 'expire' is epoch ms, or coerce if a string
 (defn password-generate
-  [system ledger {:keys [body] :as request}]
+  [system ledger {:keys [body]}]
   (let [deferred (d/deferred)]
     (async/go
       (try
@@ -603,7 +600,7 @@
 
 
 (defn password-handler
-  [system {:keys [headers body params remote-addr] :as request}]
+  [system {:keys [params] :as request}]
   (when-not (pw-auth/password-enabled? (:conn system))
     (throw (ex-info "Password authentication is not enabled."
                     {:status 401
@@ -616,7 +613,7 @@
       :generate (password-generate system ledger request))))
 
 
-(defn version-handler [system request]
+(defn version-handler [_ _]
   {:headers {"Content-Type" "text/plain"}
    :status  200
    :body    (meta/version)})
@@ -692,7 +689,7 @@
 
 
 (defn add-server
-  [system {:keys [headers body params remote-addr] :as request}]
+  [system {:keys [body]}]
   (let [{:keys [server]} (decode-body body :json)
         add-server (<?? (txproto/-add-server-async (:group system) server))]
     {:status  200
@@ -701,7 +698,7 @@
 
 
 (defn remove-server
-  [system {:keys [headers body params remote-addr] :as request}]
+  [system {:keys [body]}]
   (let [{:keys [server]} (decode-body body :json)
         remove-server (<?? (txproto/-remove-server-async (:group system) server))]
     {:status  200
@@ -710,7 +707,7 @@
 
 
 (defn health-handler
-  [system request]
+  [system _]
   (let [state (-> (txproto/-state (:group system))
                   :status)]
     {:status  200
@@ -721,7 +718,7 @@
 
 
 (defn keys-handler
-  [system request]
+  [_ _]
   (let [{:keys [public private]} (crypto/generate-key-pair)
         account-id (crypto/account-id-from-public public)]
     {:status  200
@@ -732,7 +729,7 @@
 
 
 (defn get-ledgers
-  [system request]
+  [system _]
   (let [ledgers @(fdb/ledger-list (:conn system))]
     {:status  200
      :headers {"Content-Type" "application/json; charset=utf-8"}
@@ -740,7 +737,7 @@
 
 
 (defn new-ledger
-  [{:keys [conn] :as system} {:keys [body] :as request}]
+  [{:keys [conn] :as system} {:keys [body]}]
   (let [body         (decode-body body :json)
         transactor?  (-> system :config :transactor?)
         ledger-ident (:db/id body)
@@ -748,7 +745,7 @@
         result       @(fdb/new-ledger conn ledger-ident opts)]
     ;; create session so tx-monitors will work
     (when transactor? (session/session conn ledger-ident))
-    (if (= ExceptionInfo (type result))
+    (when (= ExceptionInfo (type result))
       (throw result))
     {:status  200
      :headers {"Content-Type" "application/json; charset=utf-8"}
@@ -756,7 +753,7 @@
 
 
 (defn delete-ledger
-  [{:keys [conn] :as system} {:keys [headers body params remote-addr] :as request}]
+  [{:keys [conn] :as system} {:keys [body remote-addr] :as request}]
   (let [deferred (d/deferred)]
     (async/go
       (try
@@ -772,7 +769,7 @@
               _            (when-not (or (open-api? system)
                                          (<? (auth/root-role? db* (:auth auth-map))))
                              (throw (ex-info (str "To delete a ledger, must be using an open API or an auth record with a root role.") {:status 401 :error :db/invalid-auth})))
-              res          (<? (delete/process conn nw db))
+              _            (<? (delete/process conn nw db))
               resp         {:status  200
                             :headers {"Content-Type" "application/json; charset=utf-8"}
                             :body    (json/stringify-UTF8 {"deleted" (str nw "/" db)})}]
@@ -781,17 +778,6 @@
         (catch Exception e
           (d/error! deferred e)))) deferred))
 
-
-(defn- promise-chan->deferred
-  "Takes a channel and delivers the first result available into a manifold deferred"
-  [chan]
-  (let [d (d/deferred)]
-    (async/go
-      (let [res (async/<! chan)]
-        (if (instance? Throwable res)
-          (d/error! d res)
-          (d/success! d res))))
-    d))
 
 (defn deserialize
   [serializer key data]
@@ -828,7 +814,7 @@
                  signature        (return-signature request)
                  jwt              (return-token request)    ;may not be signed if client is using password auth
                  open-api?        (open-api? system)
-                 _                (if (and (not open-api?) (not signature) (not jwt))
+                 _                (when (and (not open-api?) (not signature) (not jwt))
                                     (throw (ex-info (str "To request an item from storage, open-api must be true or your request must be signed.") {:status 401
                                                                                                                                                     :error  :db/invalid-transaction})))
                  response-type    (if (str/includes? accept-encodings "application/json")
@@ -852,8 +838,8 @@
 
                                           {:keys [auth authority]} (http-signatures/verify-request* {:headers headers} :get
                                                                                                     (str "/fdb/storage/" network "/" db
-                                                                                                         (if type (str "/" type))
-                                                                                                         (if key (str "/" key))) host)
+                                                                                                         (when type (str "/" type))
+                                                                                                         (when key (str "/" key))) host)
                                           db          (<? (fdb/db (:conn system) db-name))]
                                       (<? (verify-auth db auth authority)))
 
@@ -879,7 +865,7 @@
                                     {"Content-Type" "text/plain"})
                  body             (cond
                                     (and avro-data (= :json response-type))
-                                    (let [serializer (fluree.db.storage.core/serde conn)
+                                    (let [serializer (storage-core/serde conn)
                                           data       (deserialize serializer formatted-key avro-data)]
                                       (if auth-id
                                         (let [auth            (if (string? auth-id) ["_auth/id" auth-id] auth-id)
@@ -904,12 +890,6 @@
                                  :headers {"Content-Type" "text/plain"}
                                  :body    "Gateway Timeout"}))
     deferred))
-
-
-
-(defn subscription-handler
-  [system request])
-
 
 
 ; From https://gist.github.com/dannypurcell/8215411
@@ -945,7 +925,6 @@
     (compojure/GET "/fdb/version" request (version-handler system request))
     (compojure/POST "/fdb/add-server" request (add-server system request))
     (compojure/POST "/fdb/remove-server" request (remove-server system request))
-    (compojure/POST "/fdb/sub" request (subscription-handler system request))
     (compojure/GET "/fdb/new-keys" request (keys-handler system request))
     (compojure/POST "/fdb/new-keys" request (keys-handler system request))
     (compojure/POST "/fdb/dbs" request (get-ledgers system request))
@@ -994,7 +973,7 @@
   (if-not (:enabled opts)
     (do (log/info "Web server disabled, not starting.")
         nil)
-    (let [{:keys [port open-api system debug-mode?]} opts
+    (let [{:keys [port open-api system debug-mode? json-bigdec-string]} opts
           _           (log/info (str "Starting web server on port: " port (if open-api " with an open API." "with a closed API.")))
           _           (log/info "")
           _           (log/info (str "http://localhost:" port))
@@ -1004,6 +983,7 @@
                                     :debug-mode? debug-mode?
                                     :open-api open-api)
           server-proc (try
+                        (json/encode-BigDecimal-as-string json-bigdec-string)
                         (http/start-server (make-handler system*) {:port port})
                         (catch BindException _
                           (log/error (str "Cannot start. Port binding failed, address already in use. Port: " port "."))
@@ -1013,8 +993,9 @@
                           (log/error "Unable to start http API: " (.getMessage e))
                           (log/error "FlureeDB Exiting.")
                           (System/exit 1)))
-          close-fn    (fn [] (do (.close ^Closeable server-proc)
-                                 (netty/wait-for-close server-proc)))]
+          close-fn    (fn []
+                        (.close ^Closeable server-proc)
+                        (netty/wait-for-close server-proc))]
       (map->WebServer {:close close-fn}))))
 
 

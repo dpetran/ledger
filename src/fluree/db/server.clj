@@ -118,14 +118,15 @@
    (log/info "JVM arguments: " (str (stats/jvm-arguments)))
    (log/info "Memory Info: " (stats/memory-stats))
    (let [config         (settings/build-settings settings)
-         {:keys [transactor? mode consensus conn join?]} config
+         {:keys [transactor? consensus conn join?]} config
          consensus-type (:type consensus)
          storage-type   (:storage-type conn)
          memory?        (= :memory storage-type)
          group          (let [group-opts (:group config)]
                           (if transactor?
+                            (txgroup/start group-opts consensus-type join?)
                             ;; TODO - currently if query-peer, we use a dummy group obj. Change this?
-                            (txgroup/start group-opts consensus-type join?) group-opts))
+                            group-opts))
 
          remote-writer  (fn [k data]
                           (txproto/storage-write-async group k data))
@@ -162,9 +163,9 @@
                                       :stats stats)
          _              (when (and (or memory? (= consensus-type :in-memory))
                                    (not (and memory? (= consensus-type :in-memory))))
-                          (do (log/warn "Error during start-up. Currently if storage-type is 'memory', then consensus-type has to be 'in-memory' and vice versa.")
-                              (shutdown system*)
-                              (System/exit 1)))]
+                          (log/warn "Error during start-up. Currently if storage-type is 'memory', then consensus-type has to be 'in-memory' and vice versa.")
+                          (shutdown system*)
+                          (System/exit 1))]
 
      ;; wait for initialization, and kick off some startup activities
      (when transactor?
@@ -187,7 +188,7 @@
   (System/exit 0))
 
 
-(defn -main [& args]
+(defn -main []
   (if-let [command (:fdb-command environ/env)]
     (execute-command command)
     (let [system (startup)]

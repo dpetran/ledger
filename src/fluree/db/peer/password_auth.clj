@@ -1,16 +1,12 @@
 (ns fluree.db.peer.password-auth
-  (:require [fluree.db.util.async :refer [<? go-try]]
-            [fluree.crypto :as crypto]
+  (:require [fluree.crypto :as crypto]
             [fluree.crypto.hmac :refer [hmac-sha256]]
             [fluree.crypto.scrypt :as scrypt]
             [fluree.crypto.secp256k1 :as secp256k1]
             [alphabase.core :as alphabase]
-            [fluree.db.util.json :as json]
-            [clojure.string :as str]
             [fluree.db.util.core :as util]
             [fluree.db.api :as fdb]
             [fluree.db.util.async :refer [go-try <?]]
-            [fluree.db.util.log :as log]
             [fluree.db.token-auth :as token-auth]))
 
 
@@ -55,14 +51,6 @@
          keypair (crypto/generate-key-pair private)]
      (assoc keypair :id (crypto/account-id-from-public (:public keypair))
                     :salt (alphabase/bytes->hex salt')))))
-
-
-(defn new-key-pair
-  "Will generate a new key pair and return map with private key, public key, salt and auth-id.
-  If optional secret is provided (byte-array), will utilize hmac sha2 encoding of password
-  instead of standard sha2."
-  [secret password]
-  (key-pair-from-password secret password nil))
 
 
 (defn verify-identity
@@ -115,7 +103,7 @@
   to decode the AES encrypted private key, which is assumed to be the first 16 bytes of the
   salt from the auth record."
   [jwt-options ledger password auth-ids+salts options]
-  (let [{:keys [secret jwt-secret max-exp max-renewal]} jwt-options
+  (let [{:keys [secret jwt-secret max-exp]} jwt-options
         auth-ids+salts* (cond
                           (not (sequential? auth-ids+salts))
                           (throw (ex-info (str "Password JWT must take two-tuples of"
@@ -329,7 +317,7 @@
   [conn ledger password options]
   (go-try
     (let [jwt-options (-> conn :meta :password-auth)
-          {:keys [secret signing-key max-exp]} jwt-options
+          {:keys [secret signing-key]} jwt-options
           ;; if an explicit private key is not provided in the options, try to use
           ;; the signing key from the server settings, else tx will attempt to use
           ;; a default root key if one is available
@@ -383,7 +371,7 @@
   (key-pair-from-password secret "lois" nil)
 
 
-
+  (require '[fluree.db.util.json :as json])
   (let [header     {:alg "HS256",
                     :typ "JWT"}
         header-enc (-> header
@@ -411,7 +399,7 @@
   (crypto/aes-decrypt new-enc iv secret :string :hex)
   (vec (alphabase/hex->bytes "6b7605abb089f63bf8c900026112eacf6ee768f25b80222dbb7731b8573a551e"))
 
-  (-> (fluree.crypto/aes-encrypt "6b7605abb089f63bf8c900026112eacf6ee768f25b80222dbb7731b8573a551e" iv secret)
-      (fluree.crypto/aes-decrypt iv secret))
+  (-> (crypto/aes-encrypt "6b7605abb089f63bf8c900026112eacf6ee768f25b80222dbb7731b8573a551e" iv secret)
+      (crypto/aes-decrypt iv secret))
 
   )

@@ -1,12 +1,21 @@
 (ns fluree.db.ledger.transact.json
-  (:require [fluree.db.util.core :as util]
-            [fluree.db.ledger.transact.tempid :as tempid]
+  (:require [fluree.db.ledger.transact.tempid :as tempid]
             [fluree.db.dbfunctions.core :as dbfunctions]
             [fluree.db.ledger.transact.txfunction :as txfunction]
             [fluree.db.ledger.transact.identity :as identity]
-            [fluree.db.util.async :refer [<? <?? go-try merge-into? channel?]]
+            [fluree.db.util.async :refer [<? <?? go-try]]
             [fluree.db.flake :as flake]
             [fluree.db.dbproto :as dbproto]))
+
+
+(def ^:const parallelism
+  "Processes this many transaction items in parallel."
+  8)
+
+(defn register-validate-fn
+  [f {:keys [validate-fn]}]
+  (swap! validate-fn update :queue conj f))
+
 
 (defn- txi?
   "Returns true if a transaction item - must be a map and have _id as one of the keys"
@@ -28,9 +37,10 @@
       :retract)
     :add))
 
+
 (defn- resolve-collection-name
   "Resolves collection name from _id"
-  [_id {:keys [db-root] :as tx-state}]
+  [_id {:keys [db-root]}]
   (cond (tempid/TempId? _id)
         (:collection _id)
 
@@ -108,7 +118,8 @@
                 (update-nested-txi obj idx* tx-state))
         o     (cond
                 child (get child "_id")
-                (dbfunctions/tx-fn? obj) (txfunction/->TxFunction obj)
+                (dbfunctions/tx-fn? obj) (-> (txfunction/to-tx-function obj tx-state)
+                                             (txfunction/execute (:id base-smt) pred-info tx-state))
                 :else obj)
         smt   (assoc base-smt :pred-info pred-info
                               :p (pred-info :id)

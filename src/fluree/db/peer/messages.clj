@@ -1,5 +1,6 @@
 (ns fluree.db.peer.messages
-  (:require [clojure.tools.logging :as log]
+  (:require [alphabase.core :as ab-core]
+            [clojure.tools.logging :as log]
             [clojure.core.async :as async]
             [clojure.string :as str]
             [fluree.db.util.json :as json]
@@ -13,7 +14,6 @@
             [fluree.db.ledger.txgroup.txgroup-proto :as txproto]
             [fluree.db.peer.password-auth :as pw-auth]
             [fluree.db.token-auth :as token-auth]
-            [fluree.db.ledger.storage.filestore :as filestore]
             [fluree.db.ledger.consensus.raft :as raft]
             [fluree.db.dbproto :as dbproto]))
 
@@ -33,7 +33,7 @@
     (throw-invalid-command (format "Command is %s bytes and exceeds the configured max size." (count cmd))))
   (let [id       (crypto/sha3-256 cmd)
         cmd-data (try (json/parse cmd)
-                      (catch Exception e
+                      (catch Exception _
                         (throw-invalid-command "Invalid command serialization, could not decode JSON.")))
         cmd-type (keyword (:type cmd-data))
         _        (when-not cmd-type (throw-invalid-command "No 'type' key in command, cannot process."))
@@ -138,7 +138,7 @@
                 (async/<!! (txproto/new-ledger-async (:group system) network dbid id signed-cmd))
 
                 id)
-      :delete-db (let [{:keys [db auth expire nonce]} cmd-data
+      :delete-db (let [{:keys [db]} cmd-data
                        [network dbid] (if (sequential? db) db (str/split db #"/"))
                        old-session    (session/session conn db)
                        db*            (async/<!! (session/current-db old-session))
@@ -209,15 +209,21 @@
                   (async/close! producer-chan))
          :ping (async/put! producer-chan [:pong req-id true nil])
 
-         :settings (success! {:open-api?         (-> system :group :open-api)
-                              :password-enabled? (pw-auth/password-enabled? (:conn system))
-                              :jwt-secret        (-> system :conn :meta :password-auth :secret
-                                                     (alphabase.core/byte-array-to-base :hex))})
+         :settings (let [open-api? (-> system :group :open-api)
+                         has-auth? (-> (get-in @subscription-auth [ws-id])
+                                       (as-> wsm (reduce-kv (fn [res _ val] (if (map? val) (into res (vals val)) res)) [] wsm))
+                                       seq)]
+                     (cond-> {:open-api?          open-api?
+                              :password-enabled?  (-> system :conn pw-auth/password-enabled?)}
+                             (or open-api? has-auth?) (assoc :jwt-secret (-> system :conn :meta :password-auth :secret
+                                                                         (ab-core/byte-array-to-base :hex)))
+                             true success!))
 
          :cmd (success! (process-command system arg))
 
          :subscribe (let [pw-enabled? (pw-auth/password-enabled? (:conn system))
                           open-api?   (-> system :group :open-api)
+                          transactor? (-> system :conn :transactor?)
                           _           (when (and (sequential? arg) (not (or pw-enabled? (not open-api?))))
                                         (throw (ex-info (str "Supplying an auth/jwt is not allowed.")
                                                         {:status 400 :error :db/invalid-db})))
@@ -229,7 +235,8 @@
                                                  [arg])
 
                           auth        (cond
-                                        (and (nil? auth-or-jwt) open-api?) ;; open, give root access
+                                        (and (nil? auth-or-jwt)
+                                             (or open-api? transactor?)) ;; open, give root access
                                         0
 
                                         (and (int? auth-or-jwt) open-api?) ;; open, allow them to select any auth
@@ -245,6 +252,10 @@
                                                         auth-or-jwt)
                                               root-db (async/<!! (fdb/db (:conn system) ledger))]
                                           (async/<!! (dbproto/-subid root-db auth-id))))
+                          _           (when-not (or auth open-api?)
+                                        (throw (ex-info "To access the server, either open-api must be true or a valid auth must be provided."
+                                                        {:status 401
+                                                         :error  :db/invalid-request})))
 
                           dbv         (session/resolve-ledger (:conn system) ledger)
                           [network dbid] dbv
@@ -255,10 +266,10 @@
                       (event-bus/subscribe-db dbv producer-chan)
                       (success! true))
 
-         :unsubscribe (let [[ledger auth] (if (sequential? (first arg))
-                                            ;; Accept either [ [network, dbid], auth ] or [network, dbid] or network/dbid
-                                            arg
-                                            [arg 0])
+         :unsubscribe (let [ledger (if (sequential? (first arg))
+                                            ;; Expect [ [network, dbid], auth ] or [network, dbid] or network/dbid
+                                            (first arg)
+                                            arg)
                             dbv (session/resolve-ledger (:conn system) ledger)
                             [network dbid] dbv
                             _   (when-not (txproto/ledger-exists? (:group system) network dbid)
@@ -312,7 +323,7 @@
                                            (txproto/get-shared-private-key (:group system) network dbid)
                                            (let [jwt-options (-> system :conn :meta :password-auth)
                                                  {:keys [secret]} jwt-options
-                                                 payload     (token-auth/verify-jwt secret jwt)]
+                                                 _           (token-auth/verify-jwt secret jwt)]
                                              (async/<!! (pw-auth/fluree-decode-jwt (:conn system) jwt))))
                              {:keys [expire nonce] :or {nonce (System/currentTimeMillis)}} cmd-data
                              expire      (or expire (+ 60000 nonce))
@@ -345,7 +356,7 @@
                                        (-> (txproto/ledger-info (:group system) network dbid)
                                            (select-keys [:indexes :block :index :status]))
                                        {})]
-                        (async/put! producer-chan [:response req-id response nil]))
+                        (success! response))
 
          :ledger-stats (let [[network dbid] (session/resolve-ledger (:conn system) arg)
                              ledger   (str network "/" dbid)
@@ -356,10 +367,11 @@
                                                           (get-in [:stats]))]
                                           (merge db-info db-stat))
                                         {})]
-                         (async/put! producer-chan [:response req-id response nil]))
+                         (success! response))
 
+         ;; TODO - change command and all internal calls to :ledger-list, deprecate :db-list
          :db-list (let [response (txproto/ledger-list (:group system))]
-                    (async/put! producer-chan [:response req-id response nil]))
+                    (success! response))
 
          ;; TODO - unsigned-cmd should cover a 'tx', remove below
          :tx (let [tx-map      arg
@@ -438,6 +450,9 @@
                               (success! jwt))))))
 
        (catch Exception e
+         (log/info "Error caught in incoming message handler: "
+                   {:error   (.getMessage e)
+                    :message msg})
          (error! e))))))
 
 
