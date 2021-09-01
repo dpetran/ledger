@@ -154,8 +154,14 @@
   (loop [[txi & r] tx
          i   0
          acc (transient [])]
-    (if (nil? txi)
-      (persistent! acc)
-      (->> (generate-statement tx-state txi [i])
-           (reduce conj! acc)
-           (recur r (inc i))))))
+    (cond
+      (nil? txi) (persistent! acc)
+      (not (map? txi)) (throw (ex-info (str "All transaction items must be maps/objects, at least one is not.")
+                                       {:status 400
+                                        :error :db/invalid-transaction}))
+      (empty? txi) (throw (ex-info (str "Empty or nil transaction item found in transaction.")
+                                   {:status 400
+                                    :error :db/invalid-transaction}))
+      :else (->> (generate-statement tx-state txi [i])
+                 (reduce conj! acc)
+                 (recur r (inc i))))))

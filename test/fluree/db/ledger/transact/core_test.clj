@@ -3,9 +3,7 @@
             [clojure.core.async :as async]
             [fluree.db.ledger.memorydb :as memorydb]
             [fluree.db.ledger.transact.core :as tx-core]
-            [fluree.db.api :as fdb]
-            [fluree.db.util.json :as json])
-  (:import (java.time Instant)))
+            [fluree.db.api :as fdb]))
 
 ;; TODO - some specific tests that we should consider including beyond the Fluree docs/examples tests we currently run.
 ;;      - many of those current tests will likely cover the below, but may not cover all of them... and sometimes the
