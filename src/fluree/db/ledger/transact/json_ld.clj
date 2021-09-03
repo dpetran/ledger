@@ -7,7 +7,9 @@
             [fluree.db.ledger.transact.identity :as identity]
             [fluree.db.ledger.transact.tempid :as tempid]
             [fluree.db.util.iri :as iri-util]
-            [fluree.db.ledger.transact.schema :as tx-schema]))
+            [fluree.db.ledger.transact.schema :as tx-schema]
+            [fluree.db.dbfunctions.core :as dbfunctions]
+            [fluree.db.ledger.transact.txfunction :as txfunction]))
 
 
 (defn system-collections
@@ -178,9 +180,15 @@
                                          (apply merge ctx))]
                      (generate-statement tx-state obj idx* ctx*)))
         p        (pred-info :id)
-        o        (if children
+        o        (cond
+                   children
                    (:id (first children))                   ;; children may be multiple further nested, but first one is one we want
-                   obj)
+
+                   (dbfunctions/tx-fn? obj)
+                   (-> (txfunction/to-tx-function obj tx-state)
+                       (txfunction/execute (:id base-smt) pred-info tx-state))
+
+                   :else obj)
         smt      (assoc base-smt :pred-info pred-info
                                  :p p
                                  :o o
@@ -273,10 +281,10 @@
         (nil? txi) (persistent! acc)
         (not (map? txi)) (throw (ex-info (str "All transaction items must be maps/objects, at least one is not.")
                                          {:status 400
-                                          :error :db/invalid-transaction}))
+                                          :error  :db/invalid-transaction}))
         (empty? txi) (throw (ex-info (str "Empty or nil transaction item found in transaction.")
                                      {:status 400
-                                      :error :db/invalid-transaction}))
+                                      :error  :db/invalid-transaction}))
         :else (->> (generate-statement tx-state txi [i] nil)
                    (reduce conj! acc)
                    (recur r (inc i)))))))

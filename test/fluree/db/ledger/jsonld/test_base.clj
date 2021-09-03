@@ -54,7 +54,7 @@
     ;; @id should be present and equal to query
     (is (= "https://www.wikidata.org/wiki/Q836821" (get query-data "@id")))
 
-    ;; 6 properties in original transaction + :_id
+    ;; 7 total keys - 6 properties in original transaction + :_id
     (is (= 7 (count (keys query-data))))))
 
 
@@ -101,18 +101,59 @@
 
 (deftest schema-org-context-query
   (testing "Using a prefix in a query, you can shorten the IRIs")
-  (let [db                 (basic/get-db test/ledger-json-ld {:syncTo 2})
-        movie-q            {:context {"myprefix" "https://schema.org/"}
-                            :select  {"?s" ["*"]}
-                            :where   [["?s" "rdf:type" "myprefix:Movie"]]}
-        movie-resp         @(fdb/query db movie-q)]
+  (let [db         (basic/get-db test/ledger-json-ld {:syncTo 2})
+        movie-q    {:context {"myprefix" "https://schema.org/"}
+                    :select  {"?s" ["*"]}
+                    :where   [["?s" "rdf:type" "myprefix:Movie"]]}
+        movie-resp @(fdb/query db movie-q)]
 
     ;; should be one Movie
     (is (= 1 (count movie-resp)))))
+
+
+(deftest update-with-iri
+  (testing "Update data on a subject using it's @id iri")
+  (let [tx         [{"@context"     "https://schema.org"
+                     "@id"          "https://www.wikidata.org/wiki/Q836821"
+                     "commentCount" 42}]
+        tx-resp    @(fdb/transact (basic/get-conn) test/ledger-json-ld tx)
+        db         (basic/get-db test/ledger-json-ld {:syncTo (:block tx-resp)})
+        query      {:selectOne ["*"]
+                    :from      "https://www.wikidata.org/wiki/Q836821"}
+        query-resp @(fdb/query db query)]
+
+    ;; tx-result status should be 200
+    (is (= 200 (:status tx-resp)))
+
+    ;; 8 total keys - 7 properties in original transaction + :_id
+    (is (= 8 (count (keys query-resp))))
+
+    ;; commentCount should be 42 as set in tx
+    (is (= 42 (get query-resp "commentCount")))))
+
+
+(deftest transaction-fn
+  (testing "Transaction function works as expected.")
+  (let [tx         [{"@context"     "https://schema.org"
+                     "@id"          "https://www.wikidata.org/wiki/Q836821"
+                     "commentCount" "#(+ (?pO) 10)"}]
+        tx-resp    @(fdb/transact (basic/get-conn) test/ledger-json-ld tx)
+        db         (basic/get-db test/ledger-json-ld {:syncTo (:block tx-resp)})
+        query      {:selectOne ["*"]
+                    :from      "https://www.wikidata.org/wiki/Q836821"}
+        query-resp @(fdb/query db query)]
+
+    ;; tx-result status should be 200
+    (is (= 200 (:status tx-resp)))
+
+    ;; commentCount should now be 52
+    (is (= 52 (get query-resp "commentCount")))))
 
 
 (deftest json-ld-tests
   (transact-schema-org)
   (basic-schema-org-query)
   (schema-org-classes-query)
-  (schema-org-context-query))
+  (schema-org-context-query)
+  (update-with-iri)
+  (transaction-fn))
