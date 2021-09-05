@@ -101,14 +101,19 @@
 
 (deftest schema-org-context-query
   (testing "Using a prefix in a query, you can shorten the IRIs")
-  (let [db         (basic/get-db test/ledger-json-ld {:syncTo 2})
-        movie-q    {:context {"myprefix" "https://schema.org/"}
-                    :select  {"?s" ["*"]}
-                    :where   [["?s" "rdf:type" "myprefix:Movie"]]}
-        movie-resp @(fdb/query db movie-q)]
+  (let [db          (basic/get-db test/ledger-json-ld {:syncTo 2})
+        movie-q     {:context {"myprefix" "https://schema.org/"} ;; prefix mapping
+                     :select  {"?s" ["*"]}
+                     :where   [["?s" "rdf:type" "myprefix:Movie"]]}
+        movie-q2    {:context "https://schema.org/"         ;; just a URL
+                     :select  {"?s" ["*"]}
+                     :where   [["?s" "rdf:type" "Movie"]]}
+        movie-resp  @(fdb/query db movie-q)
+        movie-resp2 @(fdb/query db movie-q2)]
 
     ;; should be one Movie
-    (is (= 1 (count movie-resp)))))
+    (is (= 1 (count movie-resp)))
+    (is (= 1 (count movie-resp2)))))
 
 
 (deftest update-with-iri
