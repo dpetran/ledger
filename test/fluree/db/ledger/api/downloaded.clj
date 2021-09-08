@@ -614,7 +614,7 @@
   (history-query-collection-name)
   (repeated-query-all-collections-graphql*)
   (query-collection-sparql*)
-  (query-wikidata-sparql*)
+  #_(query-wikidata-sparql*)
   (transacting-new-chats)
   (updating-persons)
   (updating-persons)
