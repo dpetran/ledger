@@ -108,12 +108,17 @@
         movie-q2    {:context "https://schema.org/"         ;; just a URL
                      :select  {"?s" ["*"]}
                      :where   [["?s" "rdf:type" "Movie"]]}
+        prop-q      {:context {"myprefix" "https://schema.org/"} ;; prefix for a property
+                     :select  {"?s" ["*"]}
+                     :where   [["?s" "myprefix:titleEIDR" "10.5240/B752-5B47-DBBE-E5D4-5A3F-N"]]}
         movie-resp  @(fdb/query db movie-q)
-        movie-resp2 @(fdb/query db movie-q2)]
+        movie-resp2 @(fdb/query db movie-q2)
+        movie-resp3 @(fdb/query db prop-q)]
 
     ;; should be one Movie
     (is (= 1 (count movie-resp)))
-    (is (= 1 (count movie-resp2)))))
+    (is (= 1 (count movie-resp2)))
+    (is (= 1 (count movie-resp3)))))
 
 
 (deftest update-with-iri
