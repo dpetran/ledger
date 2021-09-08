@@ -268,13 +268,13 @@
 
 (deftest select-boolean-predicates
   (testing "with true predicate"
-    (let [query {:select ["?person"] :from "person"
+    (let [query {:select ["?person"]
                  :where  [["?person" "person/active" true]]}
           db (basic/get-db test/ledger-chat)
           res (async/<!! (fdb/query-async db query))]
       (is (= 3 (count res)))))
   (testing "with false predicate"
-    (let [query {:select ["?person"] :from "person"
+    (let [query {:select ["?person"]
                  :where  [["?person" "person/active" false]]}
           db (basic/get-db test/ledger-chat)
           res (async/<!! (fdb/query-async db query))]
