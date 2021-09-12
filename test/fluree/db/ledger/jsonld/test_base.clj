@@ -8,22 +8,23 @@
 
 (use-fixtures :once test/test-system)
 
+(def base-tx [{"@context"                  "https://schema.org",
+               "@id"                       "https://www.wikidata.org/wiki/Q836821",
+               "@type"                     "Movie",
+               "name"                      "The Hitchhiker's Guide to the Galaxy",
+               "disambiguatingDescription" "2005 British-American comic science fiction film directed by Garth Jennings",
+               "titleEIDR"                 "10.5240/B752-5B47-DBBE-E5D4-5A3F-N",
+               "isBasedOn"                 {"@id"    "https://www.wikidata.org/wiki/Q3107329",
+                                            "@type"  "Book",
+                                            "name"   "The Hitchhiker's Guide to the Galaxy",
+                                            "isbn"   "0-330-25864-8",
+                                            "author" {"@id"   "https://www.wikidata.org/wiki/Q42"
+                                                      "@type" "Person"
+                                                      "name"  "Douglas Adams"}}}])
+
 (deftest transact-schema-org
   (testing "Transact nested schema.org data into a new ledger")
-  (let [txn          [{"@context"                  "https://schema.org",
-                       "@id"                       "https://www.wikidata.org/wiki/Q836821",
-                       "@type"                     "Movie",
-                       "name"                      "The Hitchhiker's Guide to the Galaxy",
-                       "disambiguatingDescription" "2005 British-American comic science fiction film directed by Garth Jennings",
-                       "titleEIDR"                 "10.5240/B752-5B47-DBBE-E5D4-5A3F-N",
-                       "isBasedOn"                 {"@id"    "https://www.wikidata.org/wiki/Q3107329",
-                                                    "@type"  "Book",
-                                                    "name"   "The Hitchhiker's Guide to the Galaxy",
-                                                    "isbn"   "0-330-25864-8",
-                                                    "author" {"@id"   "https://www.wikidata.org/wiki/Q42"
-                                                              "@type" "Person"
-                                                              "name"  "Douglas Adams"}}}]
-        schema-resp  @(fdb/transact (basic/get-conn) test/ledger-json-ld txn)
+  (let [schema-resp  @(fdb/transact (basic/get-conn) test/ledger-json-ld base-tx)
         tempids-keys (->> schema-resp :tempids keys (into #{}))]
 
     ;; status should be 200
@@ -139,7 +140,7 @@
     (is (= 8 (count (keys query-resp))))
 
     ;; commentCount should be 42 as set in tx
-    (is (= 42 (get query-resp "commentCount")))))
+    (is (= 42 (get query-resp "https://schema.org/commentCount")))))
 
 
 (deftest transaction-fn
@@ -157,7 +158,62 @@
     (is (= 200 (:status tx-resp)))
 
     ;; commentCount should now be 52
-    (is (= 52 (get query-resp "commentCount")))))
+    (is (= 52 (get query-resp "https://schema.org/commentCount")))))
+
+
+(deftest query-context-consistency
+  (testing "Context used for transaction produces (almost) same results in query.")
+  (let [db           (basic/get-db test/ledger-json-ld {:syncTo 2})
+        basic-q      {:context   "https://schema.org/"
+                      :selectOne ["*"]
+                      :from      "https://www.wikidata.org/wiki/Q836821"}
+        anlyt-q      {:context   "https://schema.org/"
+                      :selectOne {"?s" ["*"]}
+                      :where     [["?s" "rdf:type" "Movie"]]}
+        basic-resp   @(fdb/query db basic-q)
+        anlyt-resp2  @(fdb/query db anlyt-q)
+        base-tx-keys (->> base-tx first keys (into #{}))
+        resp-keys    (->> basic-resp keys (into #{}))]
+
+    ;; query results should be identical
+    (= basic-resp anlyt-resp2)
+
+    ;; keys should be identical to original transaction (minus @context and :_id)
+    (= (disj base-tx-keys "@context") (disj resp-keys :_id))))
+
+
+(deftest query-context-specific
+  (testing "Context used for transaction produces (almost) same results in query.")
+  (let [db           (basic/get-db test/ledger-json-ld {:syncTo 2})
+        context      {""     "https://schema.org/"
+                      "wiki" "https://www.wikidata.org/wiki/"
+                      "id" "@id"}
+        basic-q      {:context   context
+                      :selectOne ["*"]
+                      :from      "https://www.wikidata.org/wiki/Q836821"}
+        anlyt-q      {:context   context
+                      :selectOne {"?s" ["*"]}
+                      :where     [["?s" "rdf:type" "Movie"]]}
+        basic-resp   @(fdb/query db basic-q)
+        anlyt-resp2  @(fdb/query db anlyt-q)
+        base-tx-keys (->> base-tx first keys (into #{}))
+        resp-keys    (->> basic-resp keys (into #{}))]
+
+    ;; query results should be identical
+    (= basic-resp anlyt-resp2)
+
+    ;; @id should now be labeled as "id"
+    (contains? basic-q "id")
+
+    ;; wiki IRI should be shortened
+    (= "wiki:Q836821" (get basic-q "id"))
+
+    ;; @type which also uses schema.org should be shortened
+    (= ["Movie"] (get basic-q "@type"))
+
+
+    ;; schema.org 'blank' context should be identical to original transaction (minus @context and :_id and @id/id)
+    (= (disj base-tx-keys "@context" "@id") (disj resp-keys :_id "id"))))
 
 
 (deftest json-ld-tests
@@ -166,4 +222,6 @@
   (schema-org-classes-query)
   (schema-org-context-query)
   (update-with-iri)
-  (transaction-fn))
+  (transaction-fn)
+  (query-context-consistency)
+  (query-context-specific))
