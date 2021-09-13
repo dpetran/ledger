@@ -122,6 +122,55 @@
     (is (= 1 (count movie-resp3)))))
 
 
+(deftest query-context-consistency
+  (testing "Context used for transaction produces (almost) same results in query.")
+  (let [db           (basic/get-db test/ledger-json-ld {:syncTo 2})
+        basic-q      {:context   "https://schema.org/"
+                      :selectOne ["*"]
+                      :from      "https://www.wikidata.org/wiki/Q836821"}
+        anlyt-q      {:context   "https://schema.org/"
+                      :selectOne {"?s" ["*"]}
+                      :where     [["?s" "rdf:type" "Movie"]]}
+        basic-resp   @(fdb/query db basic-q)
+        anlyt-resp2  @(fdb/query db anlyt-q)
+        base-tx-keys (->> base-tx first keys (into #{}))
+        resp-keys    (->> basic-resp keys (into #{}))]
+
+    ;; query results should be identical
+    (is (= basic-resp anlyt-resp2))
+
+    ;; keys should be identical to original transaction (minus @context and :_id)
+    (is (= (disj base-tx-keys "@context") (disj resp-keys :_id)))))
+
+
+(deftest query-context-specific
+  (testing "Context used for transaction produces (almost) same results in query.")
+  (let [db           (basic/get-db test/ledger-json-ld {:syncTo 2})
+        context      {""     "https://schema.org/"
+                      "wiki" "https://www.wikidata.org/wiki/"
+                      "id" "@id"}
+        basic-q      {:context   context
+                      :selectOne ["*"]
+                      :from      "https://www.wikidata.org/wiki/Q836821"}
+        anlyt-q      {:context   context
+                      :selectOne {"?s" ["*"]}
+                      :where     [["?s" "rdf:type" "Movie"]]}
+        basic-resp   @(fdb/query db basic-q)
+        anlyt-resp2  @(fdb/query db anlyt-q)]
+
+    ;; query results should be identical
+    (is (= basic-resp anlyt-resp2))
+
+    ;; @id should now be labeled as "id"
+    (is (contains? basic-resp "id"))
+
+    ;; wiki IRI should be shortened
+    (is (= "wiki:Q836821" (get basic-resp "id")))
+
+    ;; @type which also uses schema.org should be shortened
+    (is (= ["Movie"] (get basic-resp "@type")))))
+
+
 (deftest update-with-iri
   (testing "Update data on a subject using it's @id iri")
   (let [tx         [{"@context"     "https://schema.org"
@@ -161,59 +210,17 @@
     (is (= 52 (get query-resp "https://schema.org/commentCount")))))
 
 
-(deftest query-context-consistency
-  (testing "Context used for transaction produces (almost) same results in query.")
-  (let [db           (basic/get-db test/ledger-json-ld {:syncTo 2})
-        basic-q      {:context   "https://schema.org/"
-                      :selectOne ["*"]
-                      :from      "https://www.wikidata.org/wiki/Q836821"}
-        anlyt-q      {:context   "https://schema.org/"
-                      :selectOne {"?s" ["*"]}
-                      :where     [["?s" "rdf:type" "Movie"]]}
-        basic-resp   @(fdb/query db basic-q)
-        anlyt-resp2  @(fdb/query db anlyt-q)
-        base-tx-keys (->> base-tx first keys (into #{}))
-        resp-keys    (->> basic-resp keys (into #{}))]
-
-    ;; query results should be identical
-    (= basic-resp anlyt-resp2)
-
-    ;; keys should be identical to original transaction (minus @context and :_id)
-    (= (disj base-tx-keys "@context") (disj resp-keys :_id))))
-
-
-(deftest query-context-specific
-  (testing "Context used for transaction produces (almost) same results in query.")
-  (let [db           (basic/get-db test/ledger-json-ld {:syncTo 2})
-        context      {""     "https://schema.org/"
-                      "wiki" "https://www.wikidata.org/wiki/"
-                      "id" "@id"}
-        basic-q      {:context   context
-                      :selectOne ["*"]
-                      :from      "https://www.wikidata.org/wiki/Q836821"}
-        anlyt-q      {:context   context
-                      :selectOne {"?s" ["*"]}
-                      :where     [["?s" "rdf:type" "Movie"]]}
-        basic-resp   @(fdb/query db basic-q)
-        anlyt-resp2  @(fdb/query db anlyt-q)
-        base-tx-keys (->> base-tx first keys (into #{}))
-        resp-keys    (->> basic-resp keys (into #{}))]
-
-    ;; query results should be identical
-    (= basic-resp anlyt-resp2)
-
-    ;; @id should now be labeled as "id"
-    (contains? basic-q "id")
-
-    ;; wiki IRI should be shortened
-    (= "wiki:Q836821" (get basic-q "id"))
-
-    ;; @type which also uses schema.org should be shortened
-    (= ["Movie"] (get basic-q "@type"))
-
-
-    ;; schema.org 'blank' context should be identical to original transaction (minus @context and :_id and @id/id)
-    (= (disj base-tx-keys "@context" "@id") (disj resp-keys :_id "id"))))
+(deftest subject-values-return-iris
+    (testing "Subjects with an @id should have that value shortened by context")
+    (let [db    (basic/get-db test/ledger-json-ld {:syncTo 2})
+          query {:context   {"myprefix" "https://schema.org/"
+                             "wiki"     "https://www.wikidata.org/wiki/"} ;; prefix for a property
+                 :selectOne "?id"
+                 :where     [["?s" "myprefix:titleEIDR" "10.5240/B752-5B47-DBBE-E5D4-5A3F-N"]
+                             ["?s" "@id" "?id"]]}
+          resp  @(fdb/query db query)]
+      ;; should be one Movie
+      (is (= "wiki:Q836821" resp))))
 
 
 (deftest json-ld-tests
@@ -221,7 +228,8 @@
   (basic-schema-org-query)
   (schema-org-classes-query)
   (schema-org-context-query)
+  (query-context-consistency)
+  (query-context-specific)
   (update-with-iri)
   (transaction-fn)
-  (query-context-consistency)
-  (query-context-specific))
+  (subject-values-return-iris))
