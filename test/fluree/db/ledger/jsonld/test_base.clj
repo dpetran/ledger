@@ -145,18 +145,18 @@
 
 (deftest query-context-specific
   (testing "Context used for transaction produces (almost) same results in query.")
-  (let [db           (basic/get-db test/ledger-json-ld {:syncTo 2})
-        context      {""     "https://schema.org/"
-                      "wiki" "https://www.wikidata.org/wiki/"
-                      "id" "@id"}
-        basic-q      {:context   context
-                      :selectOne ["*"]
-                      :from      "https://www.wikidata.org/wiki/Q836821"}
-        anlyt-q      {:context   context
-                      :selectOne {"?s" ["*"]}
-                      :where     [["?s" "rdf:type" "Movie"]]}
-        basic-resp   @(fdb/query db basic-q)
-        anlyt-resp2  @(fdb/query db anlyt-q)]
+  (let [db          (basic/get-db test/ledger-json-ld {:syncTo 2})
+        context     {"@vocab" "https://schema.org/"
+                     "wiki"   "https://www.wikidata.org/wiki/"
+                     "id"     "@id"}
+        basic-q     {:context   context
+                     :selectOne ["*"]
+                     :from      "https://www.wikidata.org/wiki/Q836821"}
+        anlyt-q     {:context   context
+                     :selectOne {"?s" ["*"]}
+                     :where     [["?s" "rdf:type" "Movie"]]}
+        basic-resp  @(fdb/query db basic-q)
+        anlyt-resp2 @(fdb/query db anlyt-q)]
 
     ;; query results should be identical
     (is (= basic-resp anlyt-resp2))
@@ -211,16 +211,16 @@
 
 
 (deftest subject-values-return-iris
-    (testing "Subjects with an @id should have that value shortened by context")
-    (let [db    (basic/get-db test/ledger-json-ld {:syncTo 2})
-          query {:context   {"myprefix" "https://schema.org/"
-                             "wiki"     "https://www.wikidata.org/wiki/"} ;; prefix for a property
-                 :selectOne "?id"
-                 :where     [["?s" "myprefix:titleEIDR" "10.5240/B752-5B47-DBBE-E5D4-5A3F-N"]
-                             ["?s" "@id" "?id"]]}
-          resp  @(fdb/query db query)]
-      ;; should be one Movie
-      (is (= "wiki:Q836821" resp))))
+  (testing "Subjects with an @id should have that value shortened by context")
+  (let [db    (basic/get-db test/ledger-json-ld {:syncTo 2})
+        query {:context   {"myprefix" "https://schema.org/"
+                           "wiki"     "https://www.wikidata.org/wiki/"} ;; prefix for a property
+               :selectOne "?id"
+               :where     [["?s" "myprefix:titleEIDR" "10.5240/B752-5B47-DBBE-E5D4-5A3F-N"]
+                           ["?s" "@id" "?id"]]}
+        resp  @(fdb/query db query)]
+    ;; should be one Movie
+    (is (= "wiki:Q836821" resp))))
 
 
 (deftest json-ld-tests
