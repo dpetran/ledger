@@ -131,13 +131,20 @@
         anlyt-q      {:context   "https://schema.org/"
                       :selectOne {"?s" ["*"]}
                       :where     [["?s" "rdf:type" "Movie"]]}
+        anlyt-q*     {:context   "https://schema.org"       ;; <--- note: no trailing slash as per above
+                      :selectOne {"?s" ["*"]}
+                      :where     [["?s" "rdf:type" "Movie"]]}
         basic-resp   @(fdb/query db basic-q)
-        anlyt-resp2  @(fdb/query db anlyt-q)
+        anlyt-resp   @(fdb/query db anlyt-q)
+        anlyt-resp*  @(fdb/query db anlyt-q*)
         base-tx-keys (->> base-tx first keys (into #{}))
         resp-keys    (->> basic-resp keys (into #{}))]
 
+    ;; query results with and without trailing slash in @context should be identical
+    (is (= anlyt-resp anlyt-resp*))
+
     ;; query results should be identical
-    (is (= basic-resp anlyt-resp2))
+    (is (= basic-resp anlyt-resp))
 
     ;; keys should be identical to original transaction (minus @context and :_id)
     (is (= (disj base-tx-keys "@context") (disj resp-keys :_id)))))
