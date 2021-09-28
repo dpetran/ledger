@@ -20,7 +20,8 @@
             [fluree.db.ledger.transact.json :as tx-json]
             [fluree.db.ledger.transact.json-ld :as tx-json-ld]
             [fluree.db.ledger.transact.identity :as identity]
-            [fluree.db.constants :as const])
+            [fluree.db.constants :as const]
+            [fluree.json-ld :as json-ld])
   (:import (fluree.db.flake Flake)))
 
 
@@ -140,7 +141,9 @@
                  (= :ref type) (cond
                                  (tempid/TempId? o) o       ;; tempid, don't need to resolve yet
                                  (string? o) (if (json-ld? tx-state)
-                                               (<? (identity/resolve-iri o nil context idx tx-state)) ;; since this is JSON-ld, any ref should be an iri as well.
+                                               (-> (json-ld/expand o context)
+                                                   (identity/resolve-iri nil idx tx-state)
+                                                   <?)
                                                (tempid/use o idx tx-state))
                                  (int? o) (if (= const/$rdf:type (pred-info :id))
                                             o
@@ -186,7 +189,7 @@
                     :new-db (tx-util/create-new-db-tx tx-map))
         format    (cond
                     (get-in tx [0 "_id"]) :json
-                    (tx-json-ld/tx? tx) :json-ld
+                    (json-ld/json-ld? tx) :json-ld
                     :else (throw (ex-info (str "Invalid transaction format.")
                                           {:status 400 :error :db/invalid-transaction})))
         db-before (cond-> db

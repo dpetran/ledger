@@ -3,13 +3,12 @@
             [fluree.db.util.log :as log]
             [fluree.db.dbproto :as dbproto]
             [fluree.db.constants :as const]
-            [fluree.db.api :as fdb]
             [fluree.db.ledger.transact.identity :as identity]
             [fluree.db.ledger.transact.tempid :as tempid]
-            [fluree.db.util.iri :as iri-util]
             [fluree.db.ledger.transact.schema :as tx-schema]
             [fluree.db.dbfunctions.core :as dbfunctions]
-            [fluree.db.ledger.transact.txfunction :as txfunction]))
+            [fluree.db.ledger.transact.txfunction :as txfunction]
+            [fluree.json-ld :as json-ld]))
 
 
 (defn system-collections
@@ -22,14 +21,6 @@
        vals
        (filter :base-iri)
        (reduce #(assoc %1 (:base-iri %2) (:name %2)) {})))
-
-
-(defn normalize-txi
-  "Expands transaction item from compacted iris to full iri."
-  [txi context]
-  (reduce-kv (fn [acc k v]
-               (assoc acc (iri-util/expand k context) (iri-util/expand v context)))
-             {} txi))
 
 
 (defn collector-fn
@@ -117,8 +108,7 @@
   merges into the default context"
   [txi default-context]
   (if-let [txi-context (get txi "@context")]
-    (merge default-context
-           (iri-util/expanded-context txi-context default-context))
+    (json-ld/parse-context default-context txi-context)
     default-context))
 
 
@@ -126,18 +116,17 @@
   "Return the portion of a 'statement' for the subject, which can be used for individual
   predicate+objects to add to."
   [{:keys [collector] :as tx-state} local-context txi idx]
-  (let [iri          (get-in txi ["@id" :val])
-        expanded-iri (when iri
-                       (iri-util/expand iri local-context)) ;; first expand iri with local context
-        types        (when-let [item-type (get-in txi ["@type" :val])]
-                       (<?? (tx-schema/resolve-types item-type local-context idx tx-state)))
-        collection   (collector expanded-iri types)
-        _action      (get-in txi ["@action" :val])
-        _meta        (get-in txi ["@meta" :val])
-        action       (resolve-action _action)
-        id           (if expanded-iri
-                       (<?? (identity/resolve-iri expanded-iri collection nil idx tx-state))
-                       (tempid/construct nil idx tx-state collection))]
+  (let [iri        (-> (get-in txi ["@id" :val])
+                       (json-ld/expand local-context))
+        types      (when-let [item-type (get-in txi ["@type" :val])]
+                     (<?? (tx-schema/resolve-types item-type local-context idx tx-state)))
+        collection (collector iri types)
+        _action    (get-in txi ["@action" :val])
+        _meta      (get-in txi ["@meta" :val])
+        action     (resolve-action _action)
+        id         (if iri
+                     (<?? (identity/resolve-iri iri collection idx tx-state))
+                     (tempid/construct nil idx tx-state collection))]
     {:iri        iri
      :id         id
      :tempid?    (tempid/TempId? id)
@@ -156,10 +145,11 @@
   new predicates/properties."
   [txi local-context]
   (reduce-kv (fn [acc k v]
-               (if-let [key-ctx (get local-context k)]
-                 (assoc acc (:id key-ctx) (assoc key-ctx :val v :as k))
+               (if-let [[iri details] (json-ld/details k local-context)]
+                 (assoc acc iri (assoc details :val v :as k))
                  (assoc acc k {:val v :as k})))
              {} txi))
+
 
 (defn- has-child?
   "Returns true the provided object value contains a nested transaction item."
@@ -174,8 +164,7 @@
         children (when (has-child? pred-info obj)
                    (let [ctx        (local-context obj (:context base-smt))
                          normalized (normalize-txi obj ctx)
-                         ctx*       (->> (get normalized "@type")
-                                         (#(if (sequential? %) % [%]))
+                         ctx*       (->> (:type normalized)
                                          (map #(get-in ctx [(:val %) :context]))
                                          (apply merge ctx))]
                      (generate-statement tx-state obj idx* ctx*)))
@@ -253,8 +242,8 @@
   (boolean
     (or
       (get tx "@graph")
-      (get-in tx [0 "@id"])
-      (get-in tx [0 "@context"]))))
+      (get-in tx [0 "@context"])
+      (get-in tx [0 "@id"]))))
 
 
 (defn get-tx-context
@@ -262,10 +251,9 @@
   If there is a @context defined for the tx, merges it into the db's context,
   else returns the db's context."
   [db tx]
-  (if-let [tx-ctx (get tx "@context")]
-    (let [db-ctx (-> db :schema :prefix)]
-      (merge db-ctx (iri-util/expanded-context tx-ctx db-ctx)))
-    (-> db :schema :prefix)))
+  (let [db-ctx (-> db :schema :prefix)
+        tx-ctx (get tx "@context")]
+    (json-ld/parse-context db-ctx tx-ctx)))
 
 
 (defn generate-statements
@@ -289,39 +277,3 @@
                    (reduce conj! acc)
                    (recur r (inc i)))))))
 
-
-
-
-;; TODO
-;; - add prefix-resolver to tx-state
-
-
-(comment
-  (def db (<?? (fdb/db (:conn user/system) "prefix/d")))
-
-  (def sys-coll (system-collections db))
-  sys-coll
-
-
-  (def prefix-resolver (iri-util/compact-fn sys-context))
-  (prefix-resolver "http://www.w3.org/2000/01/rdf-schema#subClass")
-
-  (def context (iri-util/expanded-context {"nc"        "http://release.niem.gov/niem/niem-core/4.0/#",
-                                           "j"         "http://release.niem.gov/niem/domains/jxdm/6.0/#",
-                                           "age"       "nc:PersonAgeMeasure",
-                                           "value"     "nc:MeasureIntegerValue",
-                                           "units"     "nc:TimeUnitCode",
-                                           "hairColor" "j:PersonHairColorCode",
-                                           "name"      "nc:PersonName",
-                                           "given"     "nc:PersonGivenName",
-                                           "surname"   "nc:PersonSurName",
-                                           "suffix"    "nc:PersonNameSuffixText",
-                                           "nickname"  "nc:PersonPreferredName",}
-                                          #_sys-context))
-
-  context
-  (def ctx-compactor (iri-util/compact-fn context))
-
-  (ctx-compactor "http://release.niem.gov/niem/niem-core/4.0/#2PersonName")
-
-  )

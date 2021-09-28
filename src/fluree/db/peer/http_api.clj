@@ -37,7 +37,7 @@
             [fluree.db.meta :as meta]
             [fluree.db.storage.core :as storage-core]
             [fluree.db.ledger.transact.core :as tx-core]
-            [fluree.db.ledger.transact.json-ld :as tx-json-ld])
+            [fluree.json-ld :as json-ld])
   (:import (java.io Closeable)
            (java.time Instant)
            (java.net BindException)
@@ -208,7 +208,7 @@
     (let [conn        (:conn system)
           private-key (when (= :jwt (:type auth-map))
                         (<? (pw-auth/fluree-decode-jwt conn (:jwt auth-map))))
-          _           (when-not (or (sequential? param) (tx-json-ld/tx? param))
+          _           (when-not (or (sequential? param) (json-ld/json-ld? param))
                         (throw (ex-info (str "A transaction submitted to the 'transact' endpoint must be a list/vector/array or valid JSON-LD.")
                                         {:status 400 :error :db/invalid-transaction})))
           auth-id     (:auth auth-map)

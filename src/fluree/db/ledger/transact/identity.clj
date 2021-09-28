@@ -5,9 +5,7 @@
             [fluree.db.util.core :as util]
             [fluree.db.query.range :as query-range]
             [fluree.db.constants :as const]
-            [fluree.db.flake :as flake]
-            [fluree.db.util.log :as log]
-            [fluree.db.util.iri :as iri-util])
+            [fluree.db.flake :as flake])
   (:import (fluree.db.flake Flake)))
 
 
@@ -28,20 +26,17 @@
 
 (defn resolve-iri
   "Resolves an iri to its subject id, or generates a tempid if not resolved."
-  [iri collection context idx {:keys [db-root idents collector] :as tx-state}]
+  [iri collection idx {:keys [db-root idents collector] :as tx-state}]
   (go-try
-    (let [expanded-iri (if context
-                         (iri-util/expand iri context)
-                         iri)]
-      (if-let [id (get @idents expanded-iri)]
-        id
-        (let [resolved (some-> (<? (query-range/index-range db-root :post = [const/$iri expanded-iri]))
-                               ^Flake first
-                               (.-s))
-              id       (or resolved
-                           (tempid/construct expanded-iri idx tx-state (or collection (collector expanded-iri nil))))]
-          (swap! idents assoc expanded-iri id)
-          id)))))
+    (if-let [id (get @idents iri)]
+      id
+      (let [resolved (some-> (<? (query-range/index-range db-root :post = [const/$iri iri]))
+                             ^Flake first
+                             (.-s))
+            id       (or resolved
+                         (tempid/construct iri idx tx-state (or collection (collector iri nil))))]
+        (swap! idents assoc iri id)
+        id))))
 
 
 (defn id-type

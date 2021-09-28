@@ -3,9 +3,10 @@
             [fluree.db.flake :as flake]
             [fluree.db.util.core :as util]
             [fluree.db.dbproto :as dbproto]
-            [fluree.db.util.iri :as iri-util]
             [fluree.db.util.async :refer [<? go-try]]
-            [fluree.db.query.range :as query-range])
+            [fluree.db.query.range :as query-range]
+            [fluree.db.util.log :as log]
+            [fluree.json-ld :as json-ld])
   (:import (fluree.db.flake Flake)))
 
 ;; functions related to validating and working with schemas inside of transactions
@@ -397,30 +398,32 @@
   and store it in schema-changes in the tx-state to ensure it only gets generated
   once even if used multiple times in the transaction."
   [pred objects idx {:keys [schema-changes] :as tx-state}]
-  (let [multi? (sequential? objects)
-        obj    (if multi? (first objects) objects)]
-    (when-not (:type obj)
-      (throw (ex-info (str "Property does not exist in the schema, and the supplied context does not include "
-                           "a @type value to create it: " pred " at position: " idx ".")
-                      {:status 400 :error :db/invalid-transaction :position idx})))
-    (if-let [p-info (get @schema-changes pred)]
-      (fn [property] (get p-info property))
-      ;; TODO - make :fluree/type consistent
-      (let [type    (or (:fluree/type obj)
-                        (cond
-                          (= "@id" (:type obj)) :ref
-                          (string? (:val obj)) :string
-                          :else (throw (ex-info (str "Cannot auto-generate: " pred " as its type is not "
-                                                     "supported for auto-generation. Type: " (:type obj) ".")
-                                                {:status 400 :error :db/invalid-transaction}))))
-            ;; TODO - add restrictComponent and others
-            p-data  (schema-map {:type  type
-                                 :name  pred
-                                 :iri   (:iri obj)
-                                 :multi (or multi? (= :ref type))
-                                 :new?  true})
-            p-data* (register-property p-data tx-state)]
-        (fn [property] (get p-data* property))))))
+  (if-let [p-info (get @schema-changes pred)]
+    (fn [property] (get p-info property))
+    (let [multi? (sequential? objects)
+          obj    (if multi? (first objects) objects)
+          props  (if (:type obj)
+                   obj
+                   (json-ld/external-iri pred))
+          _      (when-not (:type props)
+                   (throw (ex-info (str "Property does not exist in the schema, and the supplied context does not include "
+                                        "a @type value to create it: " pred " at position: " idx ".")
+                                   {:status 400 :error :db/invalid-transaction :position idx})))
+          type    (or (:fluree/type props)
+                      (cond
+                        (= "@id" (:type props)) :ref
+                        (string? (:val props)) :string
+                        :else (throw (ex-info (str "Cannot auto-generate: " pred " as its type is not "
+                                                   "supported for auto-generation. Type: " (:type props) ".")
+                                              {:status 400 :error :db/invalid-transaction}))))
+          ;; TODO - add restrictComponent and others
+          p-data  (schema-map {:type  type
+                               :name  pred
+                               :iri   pred
+                               :multi (or multi? (= :ref type))
+                               :new?  true})
+          p-data* (register-property p-data tx-state)]
+      (fn [property] (get p-data* property)))))
 
 
 (defn resolve-iri
@@ -434,11 +437,12 @@
 
 (declare resolve-types)
 
-(defn generate-type
+(defn generate+cache-type
   "Generates an @type/rdf:type (Class)"
   [type-iri context idx {:keys [idents] :as tx-state}]
   (go-try
-    (let [ctx-map      (iri-util/item-ctx type-iri context)
+    (let [ctx-map      (or (get context type-iri)
+                           (json-ld/external-iri type-iri))
           parent-ids   (when-let [parents (:rdfs/subClassOf ctx-map)]
                          ;; parents with an :id can be looked up in the same context, else
                          ;; should have an :iri which will exist outside of context
@@ -454,7 +458,7 @@
       subject-id)))
 
 
-(defn resolve-cache-iri
+(defn resolve+cache-iri
   "Attempts to resolve an expanded iri to current database, and if it resolves caches result
    for future lookups within this transaction."
   [expanded-iri {:keys [idents] :as tx-state}]
@@ -464,32 +468,20 @@
       id)))
 
 
-(defn resolve-type
-  "Attempts to resolve @type/rdf:type (Class) and caches result in the tx-state idents atom
-  to speed up future lookups. If does not exist, generates types"
-  [type-iri context idx {:keys [idents] :as tx-state}]
-  (go-try
-    (when (nil? type-iri)
-      (throw (ex-info (str "JSON-LD @type cannot be nil at position: " idx)
-                      {:status 400 :error :db/invalid-transaction})))
-    (let [expanded-iri (iri-util/expand type-iri context)]
-      (or (get @idents expanded-iri)                        ;; try cache
-          (<? (resolve-cache-iri expanded-iri tx-state))    ;; try existing db (and cache if resolves)
-          (<? (generate-type type-iri context idx tx-state)))))) ;; generate new and cache
-
-
 (defn resolve-types
   "Resolves types. If type information is available in the context and resolvable, will
   auto-generate a new type if it does not currently exist."
-  [types context idx tx-state]
+  [types context idx {:keys [idents] :as tx-state}]
   (go-try
-    (when (not-empty types)
-      (let [types* (if (sequential? types) types [types])]
+    (when (seq types)
+      (let [types* (map #(json-ld/expand % context) (if (sequential? types) types [types]))]
         (loop [[type & r] types*
                i   0
                acc []]
           (if (nil? type)
             acc
-            (->> (<? (resolve-type type context (conj idx i) tx-state))
+            (->> (or (get @idents type)                     ;; try cache
+                     (<? (resolve+cache-iri type tx-state)) ;; try existing db (and cache if resolves)
+                     (<? (generate+cache-type type context idx tx-state)))
                  (conj acc)
                  (recur r (inc i)))))))))
