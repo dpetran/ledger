@@ -397,11 +397,10 @@
   the @context supplied with the transaction, we will auto-generate the property
   and store it in schema-changes in the tx-state to ensure it only gets generated
   once even if used multiple times in the transaction."
-  [pred objects idx {:keys [schema-changes] :as tx-state}]
+  [pred obj idx {:keys [schema-changes] :as tx-state}]
   (if-let [p-info (get @schema-changes pred)]
     (fn [property] (get p-info property))
-    (let [multi? (sequential? objects)
-          obj    (if multi? (first objects) objects)
+    (let [multi? (sequential? (:val obj))
           props  (if (:type obj)
                    obj
                    (json-ld/external-iri pred))

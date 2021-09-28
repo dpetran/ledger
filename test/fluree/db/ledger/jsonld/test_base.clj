@@ -153,21 +153,21 @@
 
 (deftest query-context-specific
   (testing "Context used for transaction produces (almost) same results in query."
-    (let [db          (basic/get-db test/ledger-json-ld {:syncTo 2})
-          context     {"@vocab" "https://schema.org/"
-                       "wiki"   "https://www.wikidata.org/wiki/"
-                       "id"     "@id"}
-          basic-q     {:context   context
-                       :selectOne ["*"]
-                       :from      "https://www.wikidata.org/wiki/Q836821"}
-          anlyt-q     {:context   context
-                       :selectOne {"?s" ["*"]}
-                       :where     [["?s" "rdf:type" "Movie"]]}
-          basic-resp  @(fdb/query db basic-q)
-          anlyt-resp2 @(fdb/query db anlyt-q)]
+    (let [db         (basic/get-db test/ledger-json-ld {:syncTo 2})
+          context    {"@vocab" "https://schema.org/"
+                      "wiki"   "https://www.wikidata.org/wiki/"
+                      "id"     "@id"}
+          basic-q    {:context   context
+                      :selectOne ["*"]
+                      :from      "https://www.wikidata.org/wiki/Q836821"}
+          anlyt-q    {:context   context
+                      :selectOne {"?s" ["*"]}
+                      :where     [["?s" "rdf:type" "Movie"]]}
+          basic-resp @(fdb/query db basic-q)
+          anlyt-resp @(fdb/query db anlyt-q)]
 
       ;; query results should be identical
-      (is (= basic-resp anlyt-resp2))
+      (is (= basic-resp anlyt-resp))
 
       ;; @id should now be labeled as "id"
       (is (contains? basic-resp "id"))
@@ -176,7 +176,33 @@
       (is (= "wiki:Q836821" (get basic-resp "id")))
 
       ;; @type which also uses schema.org should be shortened
-      (is (= ["Movie"] (get basic-resp "@type"))))))
+      (is (= ["Movie"] (get basic-resp "@type")))))
+
+  (testing "Context and explicit compact-iri predicates in :select"
+    (let [db         (basic/get-db test/ledger-json-ld {:syncTo 2})
+          context    {"@vocab" "https://schema.org/"
+                      "title"  "https://schema.org/titleEIDR"}
+          basic-q    {:context   context
+                      :selectOne ["name" "title"]
+                      :from      "https://www.wikidata.org/wiki/Q836821"}
+          anlyt-q    {:context   context
+                      :selectOne {"?s" ["name" "title"]}
+                      :where     [["?s" "rdf:type" "Movie"]]}
+          basic-resp @(fdb/query db basic-q)
+          anlyt-resp @(fdb/query db anlyt-q)]
+
+      (log/warn "basic-resp" basic-resp)
+      (log/warn "anlyt-resp" anlyt-resp)
+
+      ;; query results should be identical
+      (is (= basic-resp anlyt-resp))
+
+      ;; @id should now be labeled as "id"
+      (is (= (get basic-resp "name")
+             (get-in base-tx [0 "name"])))
+
+      (is (= (get basic-resp "title")
+             (get-in base-tx [0 "titleEIDR"]))))))
 
 
 (deftest update-with-iri
@@ -301,10 +327,28 @@
       (is (= 62 (get query-resp "commentCount"))))))
 
 
-;; TODO - test multi values for a brand new predicate
+(deftest multi-cardinality-schema-gen
+  (testing "Values wrapped in a vector are assumed to be multi-cardinality."
+    (let [tx         [{"@context" "https://schema.org/"
+                       "@id"      "https://www.wikidata.org/wiki/Q836821"
+                       "award"    ["Fluree Movie Award" "People's Choice"]}]
+          tx-resp    @(fdb/transact (basic/get-conn) test/ledger-json-ld tx)
+          db         (basic/get-db test/ledger-json-ld {:syncTo (:block tx-resp)})
+          query      {:context   "https://schema.org/"
+                      :selectOne ["*"]
+                      :from      "https://www.wikidata.org/wiki/Q836821"}
+          query-resp @(fdb/query db query)]
+
+      (is (sequential? (get query-resp "award")))
+
+      (is (= 2 (count (get query-resp "award")))))))
+
+
 ;; TODO - test a new predicate/class with enough info in context to generate
 ;; TODO - rdfs/subPropertyOf
 ;; TODO - language, @en, etc.
+;; TODO - @reverse context
+
 (deftest json-ld-tests
   (transact-schema-org)
   (basic-schema-org-query)
@@ -318,4 +362,5 @@
   (subid-api-call)
   (add-new-db-prefix)
   (subsequent-tx-with-same-preds)
-  (transaction-with-custom-context))
+  (transaction-with-custom-context)
+  (multi-cardinality-schema-gen))
