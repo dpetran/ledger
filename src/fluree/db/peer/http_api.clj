@@ -37,7 +37,8 @@
             [fluree.db.meta :as meta]
             [fluree.db.storage.core :as storage-core]
             [fluree.db.ledger.transact.core :as tx-core]
-            [fluree.json-ld :as json-ld])
+            [fluree.json-ld :as json-ld]
+            [clojure.walk :as walk])
   (:import (java.io Closeable)
            (java.time Instant)
            (java.net BindException)
@@ -410,6 +411,16 @@
 
 ;; sync-to is option of db (or maybe a different db function). So doesn't return till
 
+(defn stringify-context
+  "We default parse HTTP :body JSON payloads with 'stringify-keys'. In most cases this is
+  a good thing, but in the case of the @context it is not. There are non-conformant keywords
+  (like :@context, :@vocab)"
+  [query-map]
+  (when-let [context (or (:context query-map) (get query-map (keyword "@context")))]
+    (let [f (fn [[k v]] (if (keyword? k) [(name k) v] [k v]))]
+      (walk/postwalk (fn [x] (if (map? x) (into {} (map f x)) x))
+                     context))))
+
 (defmethod action-handler :default
   [action system param auth-map ledger _]
   (go-try
@@ -423,7 +434,10 @@
           db       (fdb/db conn ledger db-opts)]
       (case action
         :query
-        (let [query (assoc param :opts (merge (:opts param) {:meta true :open-api open-api}))
+        (let [query (-> param
+                        (assoc-in [:opts :meta] true)
+                        (assoc-in [:opts :open-api] open-api)
+                        (assoc :context (stringify-context param)))
               res   (<? (fdb/query-async db query))]
           [(dissoc res :result) (:result res)])
 
