@@ -191,9 +191,6 @@
           basic-resp @(fdb/query db basic-q)
           anlyt-resp @(fdb/query db anlyt-q)]
 
-      (log/warn "basic-resp" basic-resp)
-      (log/warn "anlyt-resp" anlyt-resp)
-
       ;; query results should be identical
       (is (= basic-resp anlyt-resp))
 
@@ -344,10 +341,32 @@
       (is (= 2 (count (get query-resp "award")))))))
 
 
+(deftest reverse-reference-query
+  (testing "Graph crawls with reverse ref context."
+    (let [early-db      (basic/get-db test/ledger-json-ld {:block 2})
+          current-db    (basic/get-db test/ledger-json-ld)
+          query         {:context   {"@vocab"       "https://schema.org/"
+                                     "derivedWorks" {"@reverse" "isBasedOn"}
+                                     "wiki"         "https://www.wikidata.org/wiki/"}
+                         :selectOne ["name", {"derivedWorks" ["titleEIDR"]}]
+                         :from      "wiki:Q3107329"}
+          query-old     @(fdb/query early-db query)
+          query-current @(fdb/query current-db query)]
+
+      ;; after original transaction, 1 ref
+      (is (= 1 (count (get query-old "derivedWorks"))))
+
+      ;; we added a new subject that pointed to the same book in above test
+      (is (= 2 (count (get query-current "derivedWorks"))))
+
+      (is (= "10.5240/B752-5B47-DBBE-E5D4-5A3F-N"
+             (get-in query-old ["derivedWorks" 0 "titleEIDR"]))))))
+
+
+
 ;; TODO - test a new predicate/class with enough info in context to generate
 ;; TODO - rdfs/subPropertyOf
 ;; TODO - language, @en, etc.
-;; TODO - @reverse context
 
 (deftest json-ld-tests
   (transact-schema-org)
@@ -363,4 +382,5 @@
   (add-new-db-prefix)
   (subsequent-tx-with-same-preds)
   (transaction-with-custom-context)
-  (multi-cardinality-schema-gen))
+  (multi-cardinality-schema-gen)
+  (reverse-reference-query))
