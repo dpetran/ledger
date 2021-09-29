@@ -8,7 +8,8 @@
             [fluree.db.ledger.transact.schema :as tx-schema]
             [fluree.db.dbfunctions.core :as dbfunctions]
             [fluree.db.ledger.transact.txfunction :as txfunction]
-            [fluree.json-ld :as json-ld]))
+            [fluree.json-ld :as json-ld]
+            [fluree.json-ld.util :refer [sequential]]))
 
 
 (defn system-collections
@@ -202,17 +203,84 @@
       [] (:types base-smt))))
 
 
+(defn build-reverse-statement
+  "If a reverse reference is used from the context (i.e., {@reverse 'some-iri'})
+   we will create a statement for the parent. We only allow this if the parent
+   already exists in the DB. If it doesn't exist, the transaction could simply
+   transact the parent instead, and either use refs or a child transaction from
+   the parent.
+
+   The value of the IRI could either be:
+   - a full string IRI; e.g., https://www.wikidata.org/wiki/Q836821
+   - a compact IRI string using a prefix; e.g., wiki:Q836821
+   - a map with a single @id key using either of the above options; e.g.,
+     {'@id' 'https://www.wikidata.org/wiki/Q836821'} or
+     {'@id' 'wiki:Q836821'}"
+  [pred-info {:keys [id action]} {:keys [val]} idx context {:keys [db-before] :as tx-state}]
+  (go-try
+    (let [multi-val?  (sequential? val)
+          invalid-ref (fn [idx* msg] (throw
+                                       (ex-info (str msg ". Error found at index: "
+                                                     (if multi-val? idx* idx) ".")
+                                                {:status 400
+                                                 :error  :db/invalid-reverse-ref})))
+
+          map->id     (fn [m idx*] (if-let [iri (get m "@id")]
+                                     (if (= (list "@id") (keys m))
+                                       iri
+                                       (invalid-ref idx* (str "A map used as a reverse reference can only contain "
+                                                              "a single @id key. Provided: " m)))
+                                     (invalid-ref idx* (str "If a map is provided as a reverse ref value, must contain @id. Provided: " m))))
+          base        {:tempid?    false
+                       :action     action
+                       :collection nil                      ;; not needed here
+                       :types      nil                      ;; not needed here
+                       :context    context
+                       :pred-info  pred-info
+                       :p          (pred-info :id)
+                       :o          id
+                       :o-tempid?  (tempid/TempId? id)}]
+      (loop [[val & r] (sequential val)
+             i    0
+             smts []]
+        (if val
+          (let [idx*   (conj idx i)
+                parent (cond
+                         (map? val)
+                         (-> val (map->id idx*) (json-ld/expand context))
+
+                         (string? val)
+                         (json-ld/expand val context)
+
+                         :else (invalid-ref idx* (str "Unable to retrieve IRI or identity from reverse ref: " val)))
+                smt    (assoc base
+                         :iri parent
+                         :id (or (<? (dbproto/-subid db-before parent))
+                                 (invalid-ref idx* (str "Reverse refs in transactions must "
+                                                        "already exist in DB. Provided: " parent)))
+                         :idx (if multi-val? idx idx*))]
+            (recur r (inc i) (conj smts smt)))
+          smts)))))
+
+
 (defn predicate-statements
-  [p-o-pairs base-smt idx {:keys [db-before] :as tx-state}]
+  [p-o-pairs base-smt idx context {:keys [db-before] :as tx-state}]
   (reduce (fn [acc [pred obj]]
             (let [idx*       (conj idx (:as obj))
                   pred-info  (or (predicate-details pred (:collection base-smt) db-before)
                                  (tx-schema/generate-property pred obj idx* tx-state))
                   multi?     (pred-info :multi)
-                  statements (if multi?
+                  reverse?   (contains? obj :reverse)
+                  statements (cond
+                               reverse?
+                               (<?? (build-reverse-statement pred-info base-smt obj idx* context tx-state))
+
+                               multi?
                                (->> (if (sequential? (:val obj)) (into #{} (:val obj)) [(:val obj)])
                                     (map-indexed (partial statement-obj base-smt pred-info tx-state idx*))
                                     (apply concat))
+
+                               :else
                                (statement-obj base-smt pred-info tx-state idx* nil (:val obj)))]
               (into acc statements)))
           [] p-o-pairs))
@@ -231,7 +299,7 @@
         delete-subject? (and blank? (= :retract (:action base-smt)))]
     (cond-> []
             (:types base-smt) (into (type-statements base-smt idx tx-state))
-            p-o-pairs (into (predicate-statements p-o-pairs base-smt idx tx-state))
+            p-o-pairs (into (predicate-statements p-o-pairs base-smt idx ctx tx-state))
             blank? (conj base-smt)
             delete-subject? (conj (assoc base-smt :action :retract-subject)))))
 

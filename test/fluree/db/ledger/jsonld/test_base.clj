@@ -4,7 +4,8 @@
             [fluree.db.ledger.docs.getting-started.basic-schema :as basic]
             [fluree.db.api :as fdb]
             [fluree.db.util.log :as log]
-            [fluree.db.util.schema :as schema-util])
+            [fluree.db.util.schema :as schema-util]
+            [clojure.set :as set])
   (:import (fluree.db.flake Flake)))
 
 (use-fixtures :once test/test-system)
@@ -363,6 +364,38 @@
              (get-in query-old ["derivedWorks" 0 "titleEIDR"]))))))
 
 
+(deftest reverse-reference-transact
+  (testing "Transaction with reverse refs will work if parent already exists"
+    (let [valid-formats     {"https://example.com/ns#full-iri"    "https://www.wikidata.org/wiki/Q836821"
+                             "https://example.com/ns#compact-iri" "wiki:Q836821"
+                             "https://example.com/ns#full-id"     {"@id" "https://www.wikidata.org/wiki/Q836821"}
+                             "https://example.com/ns#compact-id"  {"@id" "wiki:Q836821"}
+                             "https://example.com/ns#multi-iri"   ["https://www.wikidata.org/wiki/Q836821"]
+                             "https://example.com/ns#multi-id"    [{"@id" "https://www.wikidata.org/wiki/Q836821"}]}
+          ;; valid-formats are many different ways of representing the same reverse ref. Bundle each into a respective txi
+          tx                (reduce-kv (fn [acc new-iri derivedWorks]
+                                         (conj acc {"@context"     {"@vocab"       "https://schema.org/"
+                                                                    "derivedWorks" {"@reverse" "isBasedOn"}
+                                                                    "wiki"         "https://www.wikidata.org/wiki/"},
+                                                    "@id"          new-iri
+                                                    "@type"        "Book",
+                                                    "derivedWorks" derivedWorks
+                                                    "name"         "Another book based Hitchhiker's Guide Movie based on"}))
+                                       []
+                                       valid-formats)
+          tx-resp           @(fdb/transact (basic/get-conn) test/ledger-json-ld tx)
+          ;; get a set of all @id values used in each one of the above transaction - will verify they exist with query
+          db                (basic/get-db test/ledger-json-ld {:syncTo (:block tx-resp)})
+          query             {:context   "https://schema.org/"
+                             :selectOne ["*", {"isBasedOn" ["@id"]}] ;; <- isBasedOn is the reverse ref of derivedWorks
+                             :from      "https://www.wikidata.org/wiki/Q836821"}
+          query-resp        @(fdb/query db query)
+          isBasedOn-iris    (into #{} (map #(get % "@id") (get-in query-resp ["isBasedOn"])))
+          derivedWorks-iris (into #{} (keys valid-formats))]
+
+      (is (set/subset? derivedWorks-iris isBasedOn-iris)))))
+
+
 
 ;; TODO - test a new predicate/class with enough info in context to generate
 ;; TODO - rdfs/subPropertyOf
@@ -383,4 +416,5 @@
   (subsequent-tx-with-same-preds)
   (transaction-with-custom-context)
   (multi-cardinality-schema-gen)
-  (reverse-reference-query))
+  (reverse-reference-query)
+  (reverse-reference-transact))
