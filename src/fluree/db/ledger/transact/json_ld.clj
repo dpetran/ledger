@@ -41,7 +41,9 @@
         default    (get sys-collections "")]
     (fn [iri types]
       (cond
-        (some #(= const/$rdfs:Class %) types) "_predicate"
+        (some #{const/$rdfs:Class const/$rdf:Property
+                const/$owl:Class const/$owl:DatatypeProperty
+                const/$owl:ObjectProperty} types) "_predicate"
 
         (and (nil? iri) default)
         default

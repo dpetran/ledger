@@ -324,6 +324,11 @@
         (into acc flakes)))
     [] (vals @schema-changes)))
 
+(def predefined-properties
+  {"http://www.w3.org/2002/07/owl#Class"            const/$owl:Class
+   "http://www.w3.org/2002/07/owl#ObjectProperty"   const/$owl:ObjectProperty
+   "http://www.w3.org/2002/07/owl#DatatypeProperty" const/$owl:DatatypeProperty})
+
 
 (defn register-property
   "Works with generate-property to do an atomic swap of the property and return
@@ -336,10 +341,11 @@
                        ;; race condition, p-data now exists, don't change atom
                        s-map
                        ;; generate new p-data record
-                       (let [next-id (if (empty? s-map)
-                                       (inc (get-in db-before [:ecount const/$_predicate]))
+                       (let [next-id (if (contains? predefined-properties iri)
+                                       (get predefined-properties iri)
                                        (->> (vals s-map)
                                             (map :id)       ;; get :id value from all current s-maps
+                                            (into [(get-in db-before [:ecount const/$_predicate])]) ;; always include larges ecount
                                             (apply max)     ;; find current max
                                             inc))
                              p-data* (assoc p-data :id next-id)]
@@ -440,20 +446,19 @@
   "Generates an @type/rdf:type (Class)"
   [type-iri context idx {:keys [idents] :as tx-state}]
   (go-try
-    (let [ctx-map      (or (get context type-iri)
-                           (json-ld/external-iri type-iri))
-          parent-ids   (when-let [parents (:rdfs/subClassOf ctx-map)]
-                         ;; parents with an :id can be looked up in the same context, else
-                         ;; should have an :iri which will exist outside of context
-                         (let [parent-iris (mapv #(or (:id %) (:iri %)) parents)]
-                           (<? (resolve-types parent-iris context idx tx-state))))
-          expanded-iri (:iri ctx-map)
-          p-data       (schema-map {:iri        expanded-iri
-                                    :class      true
-                                    :subclassOf parent-ids})
-          p-data*      (register-property p-data tx-state)
-          subject-id   (:id p-data*)]
-      (swap! idents assoc expanded-iri subject-id)
+    (let [ctx-map    (or (get context type-iri)
+                         (json-ld/external-iri type-iri))
+          parent-ids (when-let [parents (:rdfs/subClassOf ctx-map)]
+                       ;; parents with an :id can be looked up in the same context, else
+                       ;; should have an :iri which will exist outside of context
+                       (let [parent-iris (mapv #(or (:id %) (:iri %)) parents)]
+                         (<? (resolve-types parent-iris context idx tx-state))))
+          p-data     (schema-map {:iri        type-iri
+                                  :class      true
+                                  :subclassOf parent-ids})
+          p-data*    (register-property p-data tx-state)
+          subject-id (:id p-data*)]
+      (swap! idents assoc type-iri subject-id)
       subject-id)))
 
 
