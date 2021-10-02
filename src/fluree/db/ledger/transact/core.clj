@@ -293,6 +293,9 @@
                      (<? (tx-retract/flake id p o tx-state))
                      (let [s             (if tempid? (get-in @tempids [id :sid]) id)
                            o*            (if o-tempid? (get-in @tempids [o :sid]) o) ;; object may be a tempid, if so resolve to permanent id
+                           _             (when (nil? o*)
+                                           (throw (ex-info (str "Unexpected nil value for Flake object in: " [s p o* t])
+                                                           {:status 500 :error :db/unexpected-error})))
                            new-flake     (flake/->Flake s p o* t true nil)
                            ;; retractions do not need to be checked for tempids (except when tempid resolved via an :upsert true)
                            retract-flake (when (and (or (not tempid?) (contains? @upserts s))
