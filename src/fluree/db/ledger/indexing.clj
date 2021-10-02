@@ -1,6 +1,5 @@
 (ns fluree.db.ledger.indexing
-  (:require [clojure.data.avl :as avl]
-            [clojure.tools.logging :as log]
+  (:require [clojure.tools.logging :as log]
             [fluree.db.dbproto :as dbproto]
             [fluree.db.flake :as flake]
             [fluree.db.storage.core :as storage]
@@ -216,10 +215,10 @@
   [novelty first-flake rhs leftmost?]
   (try
     (cond
-      (and leftmost? rhs) (avl/subrange novelty < rhs)
-      rhs (avl/subrange novelty >= first-flake < rhs)
+      (and leftmost? rhs) (flake/subrange novelty < rhs)
+      rhs (flake/subrange novelty >= first-flake < rhs)
       leftmost? novelty                                     ;; at left and no rhs... all novelty applies
-      :else (avl/subrange novelty >= first-flake))
+      :else (flake/subrange novelty >= first-flake))
     (catch Exception e
       (log/error (str "Error indexing. Novelty subrange error: " (.getMessage e))
                  (pr-str {:first-flake first-flake :rhs rhs :leftmost? leftmost? :novelty novelty}))
