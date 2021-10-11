@@ -134,30 +134,36 @@
   "Resolves object into its final state so can be used for consistent comparisons with existing data."
   [tx-state {:keys [pred-info id o iri idx context] :as smt}]
   (go-try
-    (let [type (pred-info :type)
-          o*   (cond
-                 (nil? o) nil
+    (try
+      (let [type (pred-info :type)
+            o*   (cond
+                   (nil? o) nil
 
-                 (= :ref type) (cond
-                                 (tempid/TempId? o) o       ;; tempid, don't need to resolve yet
-                                 (string? o) (if (json-ld? tx-state)
-                                               (-> (json-ld/expand o context)
-                                                   (identity/resolve-iri nil idx tx-state)
-                                                   <?)
-                                               (tempid/use o idx tx-state))
-                                 (int? o) (if (= const/$rdf:type (pred-info :id))
-                                            o
-                                            (<? (identity/resolve-ident-strict o tx-state)))
-                                 (util/pred-ident? o) (<? (identity/resolve-ident-strict o tx-state)))
+                   (= :ref type) (cond
+                                   (tempid/TempId? o) o     ;; tempid, don't need to resolve yet
+                                   (string? o) (if (json-ld? tx-state)
+                                                 (-> (json-ld/expand o context)
+                                                     (identity/resolve-iri nil idx tx-state)
+                                                     <?)
+                                                 (tempid/use o idx tx-state))
+                                   (int? o) (if (= const/$rdf:type (pred-info :id))
+                                              o
+                                              (<? (identity/resolve-ident-strict o tx-state)))
+                                   (util/pred-ident? o) (<? (identity/resolve-ident-strict o tx-state)))
 
-                 (= :tag type) (<? (tags/resolve o idx pred-info tx-state))
+                   (= :tag type) (<? (tags/resolve o idx pred-info tx-state))
 
-                 :else (conform-object-value o type))]
-      (when (and (pred-info :unique) (not (nil? o*)))
-        (<? (resolve-unique o* id pred-info tx-state)))
-      (cond-> (assoc smt :o o*)
-              (nil? o*) (assoc :action :retract)
-              (tempid/TempId? o*) (assoc :o-tempid? true)))))
+                   :else (conform-object-value o type))]
+        (when (and (pred-info :unique) (not (nil? o*)))
+          (<? (resolve-unique o* id pred-info tx-state)))
+        (cond-> (assoc smt :o o*)
+                (nil? o*) (assoc :action :retract)
+                (tempid/TempId? o*) (assoc :o-tempid? true)))
+      (catch Exception e
+        (throw (ex-info (str "Unexpected transaction error resolving object item at index " (:idx smt)
+                             " with error: " (.getMessage e))
+                        {:status 500 :error :db/invalid-transaction}
+                        e))))))
 
 
 (defn add-singleton-flake

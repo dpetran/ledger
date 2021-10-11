@@ -407,16 +407,15 @@
   (if-let [p-info (get @schema-changes pred)]
     (fn [property] (get p-info property))
     (let [multi? (sequential? (:val obj))
-          props  (if (:type obj)
-                   obj
-                   (json-ld/external-iri pred))
+          props  (or (json-ld/external-iri pred)
+                     obj)
           _      (when-not (:type props)
                    (throw (ex-info (str "Property does not exist in the schema, and the supplied context does not include "
                                         "a @type value to create it: " pred " at position: " idx ".")
                                    {:status 400 :error :db/invalid-transaction :position idx})))
           type    (or (:fluree/type props)
                       (cond
-                        (= "@id" (:type props)) :ref
+                        (= ["@id"] (:type props)) :ref
                         (string? (:val props)) :string
                         :else (throw (ex-info (str "Cannot auto-generate: " pred " as its type is not "
                                                    "supported for auto-generation. Type: " (:type props) ".")

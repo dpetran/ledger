@@ -119,8 +119,8 @@
   "Return the portion of a 'statement' for the subject, which can be used for individual
   predicate+objects to add to."
   [{:keys [collector] :as tx-state} local-context txi idx]
-  (let [iri        (-> (get-in txi ["@id" :val])
-                       (json-ld/expand local-context))
+  (let [iri        (some-> (get-in txi ["@id" :val])
+                           (json-ld/expand local-context))
         types      (when-let [item-type (get-in txi ["@type" :val])]
                      (<?? (tx-schema/resolve-types item-type local-context idx tx-state)))
         collection (collector iri types)
@@ -186,7 +186,7 @@
                                  :o o
                                  :idx idx)]
     (if children
-      (into [smt] children)
+      (into [smt] (remove #(:blank? %) children))           ;; remove any statements containing only an @id
       [smt])))
 
 
@@ -299,11 +299,11 @@
         blank?          (and (nil? p-o-pairs)
                              (nil? (:types base-smt)))
         delete-subject? (and blank? (= :retract (:action base-smt)))]
-    (cond-> []
-            (:types base-smt) (into (type-statements base-smt idx tx-state))
-            p-o-pairs (into (predicate-statements p-o-pairs base-smt idx ctx tx-state))
-            blank? (conj base-smt)
-            delete-subject? (conj (assoc base-smt :action :retract-subject)))))
+    (cond
+      delete-subject? [(assoc base-smt :action :retract-subject)]
+      blank? [(assoc base-smt :blank? true)]
+      :else (cond-> (predicate-statements p-o-pairs base-smt idx ctx tx-state)
+                    (:types base-smt) (into (type-statements base-smt idx tx-state))))))
 
 
 (defn tx?
