@@ -1,6 +1,6 @@
 (ns fluree.db.ledger.docs.schema.predicates
   (:require [clojure.test :refer :all]
-            [fluree.db.ledger.test-helpers :as test]
+            [fluree.db.test-helpers :as test]
             [fluree.db.ledger.docs.getting-started.basic-schema :as basic]
             [fluree.db.api :as fdb]
             [clojure.core.async :as async]
@@ -74,7 +74,7 @@
                                         txn
                                         {:timeout 480000}))]
 
-    (= res "Unique predicate _predicate/name with value: _user/username matched an existing subject: 50.")
+    (is (= res "Unexpected transaction error resolving object item at index [0 \"name\"] with error: Unique predicate _predicate/name with value: _user/username matched an existing subject: 50."))
 
     (is (= 200 (:status upsertRes)))
 

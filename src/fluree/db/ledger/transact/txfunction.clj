@@ -2,6 +2,8 @@
   (:require [fluree.db.dbfunctions.core :as dbfunctions]
             [fluree.db.util.async :refer [<?? channel?]]))
 
+(set! *warn-on-reflection* true)
+
 ;; functions related to transaction functions
 
 ;; TODO - can probably parse function string to final 'lisp form' when generating TxFunction

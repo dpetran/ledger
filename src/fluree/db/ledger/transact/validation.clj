@@ -15,6 +15,8 @@
             [fluree.db.ledger.transact.tempid :as tempid])
   (:import (fluree.db.flake Flake)))
 
+(set! *warn-on-reflection* true)
+
 ;;; functions to validate transactions
 
 (defn queue-validation-fn
@@ -186,7 +188,7 @@
   (cond
     ;; some error in processing happened, don't allow transaction but communicate internal error
     (util/exception? response)
-    (ex-info (str "Internal execution error for predicate spec: " (.getMessage response) ". "
+    (ex-info (str "Internal execution error for predicate spec: " (ex-message response) ". "
                   "Predicate spec failed for predicate: " predicate-name "." (when specDoc (str " " specDoc)))
              {:status     400
               :error      :db/predicate-spec
@@ -569,7 +571,7 @@
                  (map #(let [ex (ex-data %)]
                          (when (= 500 (:status ex))
                            (log/error % "Unexpected validation error in transaction! Flakes:" (pr-str all-flakes)))
-                         (assoc ex :message (.getMessage %))))
+                         (assoc ex :message (ex-message %))))
                  (not-empty))
 
             (util/exception? next-res)
@@ -646,7 +648,7 @@
                      (map #(let [ex (ex-data %)]
                              (when (= 500 (:status ex))
                                (log/error % "Unexpected validation error in transaction! Flakes:" (pr-str all-flakes)))
-                             (assoc ex :message (.getMessage %))))
+                             (assoc ex :message (ex-message %))))
                      (not-empty))
 
                 (util/exception? next-res)

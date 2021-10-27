@@ -13,7 +13,7 @@ else
   SHACMD := sha256sum
 endif
 
-.PHONY: deps test jar uberjar stage-release run check-release-jdk-version prep-release print-version release release-stable release-latest release-version-latest docker-image install clean
+.PHONY: deps test eastwood ci jar uberjar stage-release run check-release-jdk-version prep-release print-version release release-stable release-latest release-version-latest docker-image install clean
 
 SOURCES := $(shell find src)
 RESOURCES := $(shell find resources)
@@ -98,7 +98,12 @@ target/fluree-ledger.jar: resources/adminUI $(SOURCES) $(RESOURCES)
 jar: target/fluree-ledger.jar
 
 test:
-	clojure -M:test:runner
+	clojure -X:test
+
+eastwood:
+	clojure -M:test:eastwood
+
+ci: test eastwood
 
 target/fluree-ledger.standalone.jar: resources/adminUI $(SOURCES) $(RESOURCES)
 	clojure -X:uberjar
@@ -112,20 +117,19 @@ ifneq ($(strip $(shell which git)),)
 endif
 
 docker-image:
-	docker build -t fluree/ledger:$(VERSION) .
+	docker buildx build --platform 'linux/amd64,linux/arm64' --load -t fluree/ledger:$(VERSION) .
 ifdef git_tag
-	docker tag fluree/ledger:$(VERSION) fluree/ledger:$(git_tag)
+	docker buildx build --platform 'linux/amd64,linux/arm64' --load -t fluree/ledger:$(git_tag) .
 endif
 
-docker-push: docker-image
-	docker push fluree/ledger:$(VERSION)
+docker-push:
+	docker buildx build --platform 'linux/amd64,linux/arm64' --push -t fluree/ledger:$(VERSION) .
 ifdef git_tag
-	docker push fluree/ledger:$(git_tag)
+	docker buildx build --platform 'linux/amd64,linux/arm64' --push -t fluree/ledger:$(git_tag) .
 endif
 
-docker-push-latest: docker-push
-	docker tag fluree/ledger:$(VERSION) fluree/ledger:latest
-	docker push fluree/ledger:latest
+docker-push-latest:
+	docker buildx build --platform 'linux/amd64,linux/arm64' --push -t fluree/ledger:latest .
 
 $(DESTDIR)/etc/fluree.properties: resources/fluree_sample.properties
 	install -d $(@D)
@@ -152,3 +156,4 @@ clean:
 	rm -f resources/adminUI
 	rm -rf node_modules
 	rm -f pom.xml
+	rm -rf scanning_results

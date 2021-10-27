@@ -16,12 +16,15 @@
            (java.lang.management ManagementFactory)
            (java.io Reader)))
 
+(set! *warn-on-reflection* true)
+
 
 ;; note every environment variable must be placed in this default map for it to be picked up.
 ;; THIS IS THE MASTER LIST!  nil as a value means there is no default
 (def default-env
   {:fdb-mode                     "query"                    ;; dev, query, ledger
    :fdb-join?                    false                      ;; set to true when server is joining an existing/running network
+   :fdb-query-peer-servers       "localhost:8090"           ;; servers to connect to while in query mode
    :fdb-license-key              nil
    :fdb-consensus-type           "raft"                     ;; raft
    :fdb-encryption-secret        nil                        ;; Text encryption secret for encrypting data at rest and in transit
@@ -34,6 +37,7 @@
    ;; ledger group settings
    :fdb-group-servers            nil                        ;; list of server-id@host:port, separated by commas, of servers to connect to.
    :fdb-group-this-server        nil                        ;; id of this server, must appear in the fdb-group-servers above
+   :fdb-group-port               nil                        ;; only used if this-server is not set or does not point to one of the group-servers; port to listen on for cluster connections
    :fdb-group-timeout            2000                       ;; start new election if nothing from leader in this number of milliseconds
    :fdb-group-heartbeat          nil                        ;; defaults to 1/3 of tx-group-timeout-ms
    :fdb-group-catch-up-rounds    10                         ;; defaults to 1/3 of tx-group-timeout-ms
@@ -61,7 +65,6 @@
    :fdb-api-port                 8090                       ;; integer
    :fdb-api-open                 true                       ;; true or false
 
-   :fdb-ledger-port              9790                       ;; port this server will listen on for group messages
    :fdb-ledger-private-keys      nil
    :fdb-ledger-servers           nil
 
@@ -116,21 +119,21 @@
   Uses either/both FDB_MODE and FDB_SETTINGS variables to apply
   a set of default values if not otherwise specified."
   [environment]
-  (let [properties      (when-let [prop-file (:fdb-properties-file environment)]
-                          (read-properties-file prop-file))
-        java-prop-flags (-> (stats/jvm-arguments) :input stats/jvm-args->map)
-        _               (if properties
-                          (log/info (format "Properties file %s successfully loaded."
-                                            (:fdb-properties-file environment)))
-                          (log/info "Properties file does not exist, skipping."))
-        propEnvFlag     (merge properties java-prop-flags environment)
-        propEnvFlagDef  (reduce
-                          (fn [acc [k v]] (assoc acc k (or (get propEnvFlag k) v)))
-                          {}
-                          default-env)]
-    (assert (#{"query" "ledger" "dev"} (-> propEnvFlagDef :fdb-mode str/lower-case))
+  (let [properties        (when-let [prop-file (:fdb-properties-file environment)]
+                            (read-properties-file prop-file))
+        java-prop-flags   (-> (stats/jvm-arguments) :input stats/jvm-args->map)
+        _                 (if properties
+                            (log/info (format "Properties file %s successfully loaded."
+                                              (:fdb-properties-file environment)))
+                            (log/info "Properties file does not exist, skipping."))
+        prop-env-flag     (merge properties java-prop-flags environment)
+        prop-env-flag-def (reduce
+                            (fn [acc [k v]] (assoc acc k (or (get prop-env-flag k) v)))
+                            {}
+                            default-env)]
+    (assert (#{"query" "ledger" "dev"} (-> prop-env-flag-def :fdb-mode str/lower-case))
             "Invalid FDB_MODE, must be dev, query or ledger.")
-    propEnvFlagDef))
+    prop-env-flag-def))
 
 
 (defn env-boolean
@@ -299,7 +302,8 @@
                       {:status 400 :error :db/invalid-configuration}))
       (System/exit 1))
 
-    (when (< max-memory (* 1.2 mem-cache-bytes))
+    ;; On GraalVM native-image max memory is reported as -1
+    (when (and (not= -1 max-memory) (< max-memory (* 1.2 mem-cache-bytes)))
       (throw (ex-info (str "Unable to start, JVM max memory must be at least 20% larger than fdb-memory-cache size (ideally more). Cache size: "
                            (:fdb-memory-cache env) ". JVM max memory:" (format "%.1f GB" (/ max-memory 1073741824.0)))
                       {:status 400 :error :db/invalid-configuration}))
@@ -441,38 +445,39 @@
                                    :s3 #(s3store/close s3-conn))]
     {:storage-type storage-type
      :servers      (:fdb-conn-servers settings)
-     :options      {:transactor?    is-transactor?
-                    :storage-read   storage-read
-                    :storage-exists storage-exists
-                    ;; Storage write is overwritten in the default transactor to use the RAFT group as part of the write process
-                    ;; A default can be used here for
-                    :storage-write  storage-write
-                    :storage-rename storage-rename
-                    :storage-list   storage-list
+     :options      (cond-> {:transactor? is-transactor?
+                            :tx-private-key (get-or-generate-tx-private-key settings)}
 
-                    :req-chan       (async/chan)            ;; create our own request channel so we can monitor it if in 'dev' mode
-                    ;:sub-chan            nil
-                    ;:object-cache        nil
-                    ;:object-cache-size   nil
-                    :memory         (some-> settings :fdb-memory-cache env-bytes)
-                    :close-fn       close-fn
-                    :serializer     serializer
+                     is-transactor?
+                     (assoc :storage-read storage-read
+                            :storage-exists storage-exists
+                            ;; Storage write is overwritten in the default transactor to
+                            ;; use the RAFT group as part of the write process
+                            :storage-write storage-write
+                            :storage-rename storage-rename
+                            :storage-list storage-list
 
-                    ;; ledger-specific settings
-                    :tx-private-key (get-or-generate-tx-private-key settings)
-                    ;; meta is a map of settings that are implementation-specific, i.e.
-                    ;; a transactor needs novelty-min and novelty-max, a web browser connection might need some different info
-                    :meta           {:novelty-min       (-> settings :fdb-memory-reindex env-bytes)
-                                     :novelty-max       (-> settings :fdb-memory-reindex-max env-bytes)
-                                     :dev?              dev?
-                                     :password-auth     (password-feature-settings settings)
-                                     :open-api          (-> settings :fdb-api-open env-boolean)
-                                     :file-storage-path (when (= :file storage-type)
-                                                          file-ledger-storage-path)
-                                     :s3-storage        (when (= :s3 storage-type)
-                                                          {:bucket (:bucket s3-conn)
-                                                           :prefix s3-ledger-storage-prefix})
-                                     :encryption-secret encryption-key}}}))
+                            ;; create our own request channel so we can monitor it if in 'dev' mode
+                            :req-chan (async/chan)
+
+                            :memory (some-> settings :fdb-memory-cache env-bytes)
+                            :close-fn close-fn
+                            :serializer serializer
+                            ;; ledger-specific settings meta is a map of settings that
+                            ;; are implementation-specific, i.e.  a transactor needs
+                            ;; novelty-min and novelty-max, a web browser connection
+                            ;; might need some different info
+                            :meta {:novelty-min (-> settings :fdb-memory-reindex env-bytes)
+                                   :novelty-max (-> settings :fdb-memory-reindex-max env-bytes)
+                                   :dev? dev?
+                                   :password-auth (password-feature-settings settings)
+                                   :open-api (-> settings :fdb-api-open env-boolean)
+                                   :file-storage-path (when (= :file storage-type)
+                                                        file-ledger-storage-path)
+                                   :s3-storage (when (= :s3 storage-type)
+                                                 {:bucket (:bucket s3-conn)
+                                                  :prefix s3-ledger-storage-prefix})
+                                   :encryption-secret encryption-key}))}))
 
 
 (defn- build-group-server-configs
@@ -648,7 +653,7 @@
         ;fdb-version         (util/get-version "fluree" "db")
         consensus-type (-> settings :fdb-consensus-type str/lower-case keyword)
         hostname       (-> settings :hostname)
-        group-servers  (build-group-server-configs settings)]
+        group-servers  (when is-ledger? (build-group-server-configs settings))]
 
     {:transactor? is-ledger?
      :join?       fdb-join
@@ -672,11 +677,11 @@
                    :meta        {:hostname hostname}}
      ;:version  fdb-version
 
-     :group       (build-group-settings settings group-servers)
-     :consensus   {:type    consensus-type
-                   :options (case consensus-type
-                              :raft (raft-transactor-settings settings)
-                              :in-memory {})}}))
+     :group       (when is-ledger? (build-group-settings settings group-servers))
+     :consensus   (when is-ledger? {:type    consensus-type
+                                    :options (case consensus-type
+                                               :raft (raft-transactor-settings settings)
+                                               :in-memory {})})}))
 
 
 (comment

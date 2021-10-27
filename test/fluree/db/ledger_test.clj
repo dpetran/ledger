@@ -1,6 +1,6 @@
-(ns fluree.db.ledger.ledger-test
+(ns fluree.db.ledger-test
   (:require [clojure.test :refer :all]
-            [fluree.db.ledger.test-helpers :as test]
+            [fluree.db.test-helpers :as test]
 
             [fluree.db.ledger.api.downloaded :as api]
 
@@ -33,28 +33,29 @@
             [fluree.db.ledger.docs.examples.supply-chain :as supply-chain]
             [fluree.db.ledger.docs.examples.voting :as voting]
             [fluree.db.ledger.general.todo-permissions :as todo-perm]
-
+            [fluree.db.peer.server-health-tests :as sh-test]
             [fluree.db.ledger.jsonld.test-base :as json-ld-basic]))
+
 
 ;; TODO - tests fail - commented out for convenience:
 ;; API - (test-gen-flakes-query-transact-with)
-        ; look at query-with, test-transact-with
+; look at query-with, test-transact-with
 ;; BLOCK - range should be exclusive to be compatible
-        ;(query-block-range)
-        ;(query-block-range-lower-limit)
-        ;(query-block-range-pretty-print)
+;(query-block-range)
+;(query-block-range-lower-limit)
+;(query-block-range-pretty-print)
 ;; Advanced Query - multi-query should not throw error, check on recur
-        ;(crawl-graph-two-with-recur)
-        ;(multi-query-with-error)
+;(crawl-graph-two-with-recur)
+;(multi-query-with-error)
 ;; Analytical Queries
-        ; analytical-select-one-with-aggregate-sum - don't know why failing
-        ; (analytical-select-one-with-aggregate-sample) - sample 10 is returning 9, why?
-        ; (analytical-across-sources-wikidata) - not failing, but test not done
+; analytical-select-one-with-aggregate-sum - don't know why failing
+; (analytical-select-one-with-aggregate-sample) - sample 10 is returning 9, why?
+; (analytical-across-sources-wikidata) - not failing, but test not done
 ;; SPARQL
-        ; sparql-multi-clause-with-semicolon - don't know why failing. Look into
+; sparql-multi-clause-with-semicolon - don't know why failing. Look into
 
 ;; AUTH
-        ; Have a not that create-authority sometimes fails. Run many times to check if it was fixed.
+; Have a not that create-authority sometimes fails. Run many times to check if it was fixed.
 
 (deftest all-open-tests
   (is (= :success
@@ -110,7 +111,11 @@
              (test/print-banner "General Tests")
              (todo-perm/todo-auth-tests)
 
-             ;; 10- JSON-LD
+             ;; 10- Server health
+             (test/print-banner "Server Health")
+             (sh-test/server-health-tests)
+
+             ;; 11- JSON-LD
              (test/print-banner "JSON-LD Tests")
              (json-ld-basic/json-ld-tests))))))
 

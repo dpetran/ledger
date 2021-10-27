@@ -5,9 +5,9 @@
             [clojure.core.async :as async]
             [fluree.db.api :as fdb]
             [fluree.db.ledger.docs.getting-started.basic-schema :as basic]
-            [fluree.db.ledger.test-helpers :as test]
+            [fluree.db.test-helpers :as test]
             [fluree.db.query.http-signatures :as http-signatures]
-            [aleph.http :as http]
+            [org.httpkit.client :as http]
             [byte-streams :as bs]
             [fluree.db.util.json :as json]))
 
@@ -22,13 +22,12 @@
 (def endpoint (str "http://localhost:" @test/port "/fdb/" test/ledger-chat "/"))
 
 (deftest add-permission-scheme
-  []
-  (let [personAuth     [{:_id  "_predicate", :name "person/auth", :doc "Reference to a database auth.",
-                         :type "ref", :restrictCollection "_auth"}]
-        personAuthResp (async/<!! (fdb/transact-async (basic/get-conn) test/ledger-chat personAuth))
-        filename       "../test/fluree/db/ledger/Resources/ChatApp/ruleExample.edn"
-        txn            (edn/read-string (slurp (io/resource filename)))
-        resp           (async/<!! (fdb/transact-async (basic/get-conn) test/ledger-chat txn))]
+  (let [person-auth [{:_id  "_predicate", :name "person/auth", :doc "Reference to a database auth.",
+                      :type "ref", :restrictCollection "_auth"}]
+        _           (async/<!! (fdb/transact-async (basic/get-conn) test/ledger-chat person-auth))
+        filename    "../test/fluree/db/ledger/Resources/ChatApp/ruleExample.edn"
+        txn         (-> filename io/resource slurp edn/read-string)
+        resp        (async/<!! (fdb/transact-async (basic/get-conn) test/ledger-chat txn))]
     (is (= 200 (:status resp)))))
 
 (deftest permissioned-query
@@ -37,12 +36,12 @@
         my-request   {:headers {"content-type" "application/json"}
                       :body    (json/stringify query)}
         q-endpoint   (str endpoint "multi-query")
-        level-1-req  (-> (http-signatures/sign-request :post q-endpoint my-request (:private-key jdoe))
-                         (assoc :content-type :json))
-        level-2-req  (-> (http-signatures/sign-request :post q-endpoint my-request (:private-key zsmith))
-                         (assoc :content-type :json))
-        level-1-resp (-> @(http/post q-endpoint level-1-req) :body bs/to-string json/parse)
-        level-2-resp (-> @(http/post q-endpoint level-2-req) :body bs/to-string json/parse)]
+        level-1-req  (http-signatures/sign-request :post q-endpoint my-request (:private-key jdoe))
+        level-2-req  (http-signatures/sign-request :post q-endpoint my-request (:private-key zsmith))
+        l1-resp      @(http/post q-endpoint level-1-req)
+        l2-resp      @(http/post q-endpoint level-2-req)
+        level-1-resp (-> l1-resp :body bs/to-string json/parse)
+        level-2-resp (-> l2-resp :body bs/to-string json/parse)]
 
     ;; Level 1 should not be able to view chat/comments
     (is (= #{} (->> level-1-resp :chat (map :chat/comments) flatten (remove nil?) set)))
@@ -55,10 +54,9 @@
     (is (= #{:person/handle :_id}
            (->> (:person level-1-resp) (map keys) flatten set)))
 
-    ;; Level 2 should be able to view all person predicates
-    (is (= #{:person/handle :_id :person/favNums :person/age :person/favArtists
-             :person/follows :person/auth :person/fullName :person/favMovies
-             :person/active}
+    ;; Level 2 should be able to view all person predicates (but not refs they were not given permission to)
+    (is (= #{:person/handle :_id :person/favNums :person/age
+             :person/follows :person/fullName :person/active}
            (->> (:person level-2-resp) (map keys) flatten set)))))
 
 (deftest permissioned-transaction

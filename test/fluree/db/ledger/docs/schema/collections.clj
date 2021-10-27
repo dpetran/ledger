@@ -1,6 +1,6 @@
 (ns fluree.db.ledger.docs.schema.collections
   (:require [clojure.test :refer :all]
-            [fluree.db.ledger.test-helpers :as test]
+            [fluree.db.test-helpers :as test]
             [fluree.db.ledger.docs.getting-started.basic-schema :as basic]
             [fluree.db.api :as fdb]
             [clojure.core.async :as async]
@@ -65,7 +65,7 @@
         attemptToUpsertRes  (async/<!! (fdb/transact-async (basic/get-conn) test/ledger-chat txn))]
 
 
-    (= res "Unique predicate _collection/name with value: _user matched an existing subject: 17592186044421.")
+    (is (= res "Unexpected transaction error resolving object item at index [0 \"name\"] with error: Unique predicate _collection/name with value: _user matched an existing subject: 17592186044421."))
 
     (is (= 200 (:status upsertRes)))
 

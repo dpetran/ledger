@@ -24,6 +24,8 @@
             [fluree.json-ld :as json-ld])
   (:import (fluree.db.flake Flake)))
 
+(set! *warn-on-reflection* true)
+
 
 (def ^:const parallelism
   "Processes this many transaction items in parallel."
@@ -190,7 +192,8 @@
 
 (defn ->tx-state
   [db block-instant {:keys [auth auth-sid authority authority-sid tx-permissions txid cmd sig nonce type] :as tx-map}]
-  (let [tx        (case (:type tx-map)                      ;; command type is either :tx or :new-db
+  (let [tx-type   (keyword type)
+        tx        (case tx-type                             ;; command type is either :tx or :new-db
                     :tx (:tx tx-map)
                     :new-db (tx-util/create-new-db-tx tx-map))
         format    (cond
@@ -212,7 +215,7 @@
              :t                (dec (:t db))
              :instant          block-instant
              :txid             txid
-             :tx-type          type
+             :tx-type          tx-type
              :format           format
              :tx               tx
              :tx-string        cmd
@@ -375,7 +378,7 @@
 (defn build-transaction
   [tx-state]
   (go-try
-    (let [{:keys [db-before auth-id authority-id txid tx t tx-type fuel permissions format]} tx-state
+    (let [{:keys [db-root auth-id authority-id txid tx t tx-type fuel permissions format]} tx-state
           tx-flakes        (<? (do-transact tx-state tx))
           tx-meta-flakes   (tx-meta/tx-meta-flakes tx-state nil)
           tempids-map      (tempid/result-map tx-state)
@@ -386,16 +389,15 @@
                                    (= :json-ld format) (into (identity/generate-tempid-flakes tx-state)))
           ;; kick off hash process in the background, it can take a while
           hash-flake       (future (tx-meta/generate-hash-flake all-flakes tx-state))
-          fast-forward-db? (:tt-id db-before)
+          fast-forward-db? (:tt-id db-root)
           ;; final db that can be used for any final testing/spec validation
           db-after         (-> (if fast-forward-db?
-                                 (<? (dbproto/-forward-time-travel db-before all-flakes))
-                                 (<? (dbproto/-with-t db-before all-flakes)))
-                               dbproto/-rootdb
+                                 (<? (dbproto/-forward-time-travel db-root all-flakes))
+                                 (<? (dbproto/-with-t db-root all-flakes)))
                                tx-util/make-candidate-db
                                (tx-meta/add-tx-hash-flake @hash-flake)
                                (update-db-after tx-state))
-          tx-bytes         (- (get-in db-after [:stats :size]) (get-in db-before [:stats :size]))
+          tx-bytes         (- (get-in db-after [:stats :size]) (get-in db-root [:stats :size]))
 
           ;; kick off permissions, returns async channel so allow to process in the background
           ;; spec error reporting (next line) will take precedence over permission errors
@@ -410,7 +412,7 @@
                :t            t
                :auth         auth-id
                :authority    authority-id
-               :db-before    db-before
+               :db-before    db-root
                :db-after     db-after                       ;; will get replaced if there is an error
                :status       200                            ;; will get replaced if there is an error
                :errors       nil                            ;; will get replaced if there is an error
@@ -436,18 +438,18 @@
 
 
 (defn transact
-  [{:keys [db-before instant]} tx-map]
+  [{:keys [db-after instant]} tx-map]
   (async/go
     (try
       (when (not-empty (:deps tx-map))                      ;; transaction has dependencies listed, verify they are satisfied
-        (<? (tx-validate/tx-deps-check db-before tx-map)))
+        (<? (tx-validate/tx-deps-check db-after tx-map)))
       (let [start-time (util/current-time-millis)
-            tx-map*  (<? (tx-auth/add-auth-ids-permissions db-before tx-map))
-            tx-state (->tx-state db-before instant tx-map*)
+            tx-map*  (<? (tx-auth/add-auth-ids-permissions db-after tx-map))
+            tx-state (->tx-state db-after instant tx-map*)
             result   (async/<! (build-transaction tx-state))
             result* (if (util/exception? result)
                       (<? (tx-error/handler result tx-state))
                       result)]
         (assoc result* :duration (str (- (util/current-time-millis) start-time) "ms")))
       (catch Exception e
-        (async/<! (tx-error/pre-processing-handler e db-before tx-map))))))
+        (async/<! (tx-error/pre-processing-handler e db-after tx-map))))))

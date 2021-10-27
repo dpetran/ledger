@@ -6,6 +6,8 @@
             [fluree.db.util.async :refer [go-try <?]]
             [fluree.db.ledger.txgroup.txgroup-proto :as txproto]))
 
+(set! *warn-on-reflection* true)
+
 ;; for deleting a current db
 
 (defn delete-all-index-children
@@ -63,9 +65,9 @@
   "Deletes the full-text (lucene) indexes for a ledger."
   [conn network dbid]
   (go-try
-    (let [indexer       (-> conn :full-text/indexer :process)
-          db            (<? (session/db conn (str network "/" dbid) nil))]
-      (<? (indexer {:action :forget, :db db})))))
+    (when-let [indexer (-> conn :full-text/indexer :process)]
+      (let [db (<? (session/db conn (str network "/" dbid) nil))]
+        (<? (indexer {:action :forget, :db db}))))))
 
 (defn process
   "Deletes a current DB, deletes block files."

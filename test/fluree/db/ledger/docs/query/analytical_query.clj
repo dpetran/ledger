@@ -1,6 +1,6 @@
 (ns fluree.db.ledger.docs.query.analytical-query
   (:require [clojure.test :refer :all]
-            [fluree.db.ledger.test-helpers :as test]
+            [fluree.db.test-helpers :as test]
             [fluree.db.ledger.docs.getting-started.basic-schema :as basic]
             [fluree.db.api :as fdb]
             [clojure.core.async :as async]
@@ -44,12 +44,15 @@
 
 (deftest analytical-with-prefix-two-clauses-two-tuple-subject
   (testing "Analytical query with two clauses, two bound variables, two-tuple subjects")
-  (let [crawl-query       { :select  ["?nums1", "?nums2"]
-                           :where [[["person/handle", "zsmith"], "person/favNums", "?nums1"], [["person/handle", "jdoe"], "person/favNums", "?nums2"] ]}
+  (let [crawl-query       {:select  ["?nums1", "?nums2"]
+                           :where [[["person/handle", "zsmith"],
+                                    "person/favNums", "?nums1"],
+                                   [["person/handle", "jdoe"],
+                                    "person/favNums", "?nums2"] ]}
         db  (basic/get-db test/ledger-chat)
         res  (async/<!! (fdb/query-async db crawl-query))]
-    (is (= (first (map set (apply (partial map vector) res)))) #{-1 645 1223 28 5})
-    (is (= (last (map set (apply (partial map vector) res)))) #{0 -2 1223 12 98})))
+    (is (= (first (map set (apply (partial map vector) res))) #{-1 645 1223 28 5}))
+    (is (= (last (map set (apply (partial map vector) res))) #{0 -2 1223 12 98}))))
 
 
 (deftest analytical-with-prefix-two-clauses-two-tuple-subject-matching

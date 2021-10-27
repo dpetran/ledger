@@ -1,6 +1,6 @@
 (ns fluree.db.ledger.docs.getting-started.basic-schema
   (:require [clojure.test :refer :all]
-            [fluree.db.ledger.test-helpers :as test]
+            [fluree.db.test-helpers :as test]
             [fluree.db.api :as fdb]
             [clojure.core.async :as async]
             [clojure.java.io :as io]
@@ -106,7 +106,7 @@
     (is (= 200 (:status collection-resp)))
     (is (= 5 (:block collection-resp)))
     ;; tempids should only have person key
-    (= #{"person"} (-> collection-resp :tempids keys set))
+    (is (= #{"person"} (-> collection-resp :tempids keys set)))
     ;; should be two persons added
     (is (= 2 (-> collection-resp :tempids (test/get-tempid-count "person"))))))
 
