@@ -201,6 +201,22 @@
         true))))
 
 
+(defn json-ld-tx?
+  "Returns true if an HTTP API transaction is a JSON-LD graph-map which looks
+  like { @context: ..., @graph [{...}, ...]}
+
+  Because we parse all http-api params into keyword keys, and anything starting
+  with '@' is not a valid keyword, we need to do a workaround to test for this case.
+
+  We should consider leaving it up to the function(s) to parse the JSON payloads in
+  a manner that makes sense for them, instead of doing it upstream for everything where
+  keywordize-keys is always happening."
+  [x]
+  (and (map? x)
+       (= #{(keyword "@context") (keyword "@graph")}
+          (into #{} (keys x)))))
+
+
 (defmulti action-handler (fn [action _ _ _ _ _] action))
 
 
@@ -211,7 +227,7 @@
     (let [conn        (:conn system)
           private-key (when (= :jwt (:type auth-map))
                         (<? (pw-auth/fluree-decode-jwt conn (:jwt auth-map))))
-          _           (when-not (or (sequential? param) (json-ld/json-ld? param))
+          _           (when-not (or (sequential? param) (json-ld-tx? param))
                         (throw (ex-info (str "A transaction submitted to the 'transact' endpoint must be a list/vector/array or valid JSON-LD.")
                                         {:status 400 :error :db/invalid-transaction})))
           txid-only?  (some-> (get opts "txid-only") str/lower-case (= "true"))
