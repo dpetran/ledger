@@ -262,7 +262,7 @@
 
 (defn -main []
   (println "******************************************"
-           "\nFluree version" (meta/version)
+           "\nFluree version" (meta/version) "DEP test"
            "\n******************************************\n")
   (flat/set-decoder! codec/destringify-val)
   (if-let [command (:fdb-command environ/env)]
